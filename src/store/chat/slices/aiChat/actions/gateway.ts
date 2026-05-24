@@ -7,6 +7,7 @@ import {
 import type { ConversationContext, ExecAgentResult, MessageMetadata } from '@lobechat/types';
 
 import { isDesktop } from '@/const/version';
+import { agentRuntimeClient } from '@/services/agentRuntime';
 import { aiAgentService, type ResumeApprovalParam } from '@/services/aiAgent';
 import { messageService } from '@/services/message';
 import { topicService } from '@/services/topic';
@@ -89,8 +90,17 @@ export class GatewayActionImpl {
   /**
    * Connect to the Agent Gateway for a specific operation.
    * Creates an AgentStreamClient, manages its lifecycle, and wires up event callbacks.
+   *
+   * In `sse` mode (self-host deployments without an external gateway), routes
+   * the subscription to this server's `/api/agent/stream` SSE endpoint instead.
    */
   connectToGateway = (params: ConnectGatewayParams): void => {
+    const mode = window.global_serverConfigStore?.getState()?.serverConfig?.agentGatewayMode;
+    if (mode === 'sse') {
+      this.connectToGatewayViaSse(params);
+      return;
+    }
+
     const { operationId, gatewayUrl, token, topicId, onEvent, onSessionComplete, resumeOnConnect } =
       params;
 
@@ -210,6 +220,102 @@ export class GatewayActionImpl {
   };
 
   /**
+   * SSE-backed gateway subscription used in `agentGatewayMode=sse` (self-host).
+   *
+   * Skips the external WebSocket entirely and pulls events directly from this
+   * server's own `/api/agent/stream` SSE route, which reads the same Redis
+   * Stream the gateway would have read. Same `gatewayConnections` slot,
+   * same event handler — the rest of the store can't tell the difference.
+   *
+   * Out-of-band concerns the WS path handles via the gateway service are
+   * already covered elsewhere in self-host mode:
+   * - interrupt: `onOperationCancel` calls `aiAgentService.interruptTask` over
+   *   tRPC; no need for an in-band `interrupt` frame.
+   * - tool_result (Desktop client-side tools): not used in spawnLocal /
+   *   server-runtime scenarios. If Desktop self-host eventually needs this we
+   *   add a tRPC mutation alongside.
+   * - auth: SSE route relies on the existing NextAuth session cookie.
+   */
+  private connectToGatewayViaSse = (params: ConnectGatewayParams): void => {
+    const { operationId, onEvent, onSessionComplete, resumeOnConnect } = params;
+
+    this.disconnectFromGateway(operationId);
+
+    let abort = () => {};
+    const sseClient: GatewayConnection['client'] = {
+      connect: () => {},
+      disconnect: () => abort(),
+      on: () => {},
+      reconnect: async () => {},
+      sendInterrupt: () => {},
+      sendToolResult: () => false,
+      updateToken: () => {},
+    };
+
+    this.#set(
+      (state) => ({
+        gatewayConnections: {
+          ...state.gatewayConnections,
+          [operationId]: { client: sseClient, status: 'connecting' },
+        },
+      }),
+      false,
+      'connectToGateway/sse',
+    );
+
+    let sessionCompleted = false;
+    const fireSessionComplete = () => {
+      if (sessionCompleted) return;
+      sessionCompleted = true;
+      onSessionComplete?.();
+    };
+
+    const setStatus = (status: ConnectionStatus, action: string) => {
+      this.#set(
+        (state) => {
+          const conn = state.gatewayConnections[operationId];
+          if (!conn) return state;
+          return {
+            gatewayConnections: {
+              ...state.gatewayConnections,
+              [operationId]: { ...conn, status },
+            },
+          };
+        },
+        false,
+        action,
+      );
+    };
+
+    const controller = agentRuntimeClient.createStreamConnection(operationId, {
+      // When the caller asked for resume (page reload), include history so we
+      // replay events that may have been emitted while the page was navigating.
+      includeHistory: !!resumeOnConnect,
+      lastEventId: '0',
+      onConnect: () => setStatus('connected', 'gateway/sse/connected'),
+      onDisconnect: () => {
+        this.internal_cleanupGatewayConnection(operationId);
+        fireSessionComplete();
+      },
+      onError: (error) => {
+        console.error(`[Gateway/SSE] stream error for operation ${operationId}:`, error);
+      },
+      onEvent: (event) => {
+        // SSE-specific framing events the agent handler doesn't expect.
+        if (event.type === 'connected' || event.type === 'heartbeat') return;
+
+        onEvent?.(event as unknown as AgentStreamEvent);
+
+        if (event.type === 'agent_runtime_end' || event.type === 'error') {
+          fireSessionComplete();
+        }
+      },
+    });
+
+    abort = () => controller.abort();
+  };
+
+  /**
    * Send an interrupt command to stop the agent for a specific operation.
    */
   interruptGatewayAgent = (operationId: string): void => {
@@ -291,8 +397,11 @@ export class GatewayActionImpl {
       resumeApproval,
     } = params;
 
-    const agentGatewayUrl =
-      window.global_serverConfigStore!.getState().serverConfig.agentGatewayUrl!;
+    const serverConfig = window.global_serverConfigStore!.getState().serverConfig;
+    const isSseMode = serverConfig.agentGatewayMode === 'sse';
+    // In sse mode we don't connect to an external gateway, but downstream
+    // params still want a string. Use any URL — the SSE branch ignores it.
+    const agentGatewayUrl = isSseMode ? '' : serverConfig.agentGatewayUrl!;
 
     const isCreateNewTopic = !context.topicId;
     const taskId = context.viewedTask?.type === 'detail' ? context.viewedTask.taskId : undefined;
@@ -478,9 +587,12 @@ export class GatewayActionImpl {
   }): Promise<void> => {
     const { assistantMessageId, operationId, topicId, scope, threadId } = params;
 
-    const agentGatewayUrl =
-      window.global_serverConfigStore?.getState()?.serverConfig?.agentGatewayUrl;
-    if (!agentGatewayUrl) return;
+    const serverConfig = window.global_serverConfigStore?.getState()?.serverConfig;
+    const isSseMode = serverConfig?.agentGatewayMode === 'sse';
+    const agentGatewayUrl = serverConfig?.agentGatewayUrl;
+    // In sse mode the URL is unused, but we still need a serverConfig present.
+    // For gateway mode the URL is required to know where to connect.
+    if (!isSseMode && !agentGatewayUrl) return;
 
     // Skip reconnect if the gateway action already established (or is establishing)
     // a fresh connection for this operation. This prevents a race on new-topic creation
@@ -532,7 +644,7 @@ export class GatewayActionImpl {
     });
 
     this.#get().connectToGateway({
-      gatewayUrl: agentGatewayUrl,
+      gatewayUrl: agentGatewayUrl ?? '',
       onEvent: eventHandler,
       onSessionComplete: () => {
         this.#get().completeOperation(gatewayOpId);

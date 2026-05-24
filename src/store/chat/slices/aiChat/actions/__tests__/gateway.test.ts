@@ -2,6 +2,7 @@ import type { AgentStreamEvent } from '@lobechat/agent-gateway-client';
 import { RequestTrigger } from '@lobechat/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { agentRuntimeClient } from '@/services/agentRuntime';
 import { aiAgentService } from '@/services/aiAgent';
 
 import type { GatewayConnection } from '../gateway';
@@ -12,6 +13,12 @@ vi.mock('@/services/aiAgent', () => ({
     execAgentTask: vi.fn(),
     interruptTask: vi.fn(),
     refreshGatewayToken: vi.fn(),
+  },
+}));
+
+vi.mock('@/services/agentRuntime', () => ({
+  agentRuntimeClient: {
+    createStreamConnection: vi.fn(),
   },
 }));
 
@@ -743,6 +750,185 @@ describe('GatewayActionImpl', () => {
       const [, handler] = onOperationCancel.mock.calls[0];
       await handler();
       expect(interruptTaskSpy).toHaveBeenCalledWith({ operationId: 'server-op-xyz' });
+    });
+  });
+
+  describe('connectToGatewayViaSse (agentGatewayMode=sse)', () => {
+    function withSseMode<T>(fn: () => T): T {
+      const original = (globalThis as any).window?.global_serverConfigStore;
+      (globalThis as any).window = (globalThis as any).window ?? {};
+      (globalThis as any).window.global_serverConfigStore = {
+        getState: () => ({ serverConfig: { agentGatewayMode: 'sse' } }),
+      };
+      try {
+        return fn();
+      } finally {
+        (globalThis as any).window.global_serverConfigStore = original;
+      }
+    }
+
+    /**
+     * Capture the options handed to `agentRuntimeClient.createStreamConnection`
+     * so the test can drive callbacks directly. Returns an AbortController-like
+     * shim whose `abort` is spy-able.
+     */
+    function captureSseConnection() {
+      const ctrl = { abort: vi.fn() };
+      const sseFactory = vi.mocked(agentRuntimeClient.createStreamConnection);
+      sseFactory.mockReset();
+      let captured: any;
+      sseFactory.mockImplementation((opId, options) => {
+        captured = { opId, options };
+        return ctrl as any;
+      });
+      return {
+        ctrl,
+        sseFactory,
+        get captured() {
+          return captured;
+        },
+      };
+    }
+
+    it('routes the subscription to the SSE endpoint, skipping the WebSocket client', () => {
+      withSseMode(() => {
+        const { action, mockClient, state } = createTestAction();
+        const sse = captureSseConnection();
+
+        action.connectToGateway({
+          gatewayUrl: '',
+          operationId: 'op-sse-1',
+          token: 'unused-in-sse',
+          topicId: TEST_TOPIC_ID,
+        });
+
+        expect(mockClient.connect).not.toHaveBeenCalled();
+        expect(sse.sseFactory).toHaveBeenCalledOnce();
+        expect(sse.captured.opId).toBe('op-sse-1');
+        expect(state.gatewayConnections['op-sse-1']).toBeDefined();
+        expect(state.gatewayConnections['op-sse-1'].status).toBe('connecting');
+      });
+    });
+
+    it('transitions to connected when the SSE stream opens', () => {
+      withSseMode(() => {
+        const { action, state } = createTestAction();
+        const sse = captureSseConnection();
+
+        action.connectToGateway({
+          gatewayUrl: '',
+          operationId: 'op-sse-2',
+          token: 'unused',
+          topicId: TEST_TOPIC_ID,
+        });
+
+        sse.captured.options.onConnect();
+        expect(state.gatewayConnections['op-sse-2'].status).toBe('connected');
+      });
+    });
+
+    it('forwards agent events to the caller and skips connected/heartbeat frames', () => {
+      withSseMode(() => {
+        const { action } = createTestAction();
+        const sse = captureSseConnection();
+        const events: AgentStreamEvent[] = [];
+
+        action.connectToGateway({
+          gatewayUrl: '',
+          onEvent: (e) => events.push(e),
+          operationId: 'op-sse-3',
+          token: 'unused',
+          topicId: TEST_TOPIC_ID,
+        });
+
+        // SSE framing events should be filtered out before reaching the handler.
+        sse.captured.options.onEvent({ type: 'connected', timestamp: 1 });
+        sse.captured.options.onEvent({ type: 'heartbeat', timestamp: 2 });
+
+        const chunk = {
+          data: { content: 'hello' },
+          operationId: 'op-sse-3',
+          stepIndex: 0,
+          timestamp: Date.now(),
+          type: 'stream_chunk',
+        };
+        sse.captured.options.onEvent(chunk);
+
+        expect(events).toEqual([chunk]);
+      });
+    });
+
+    it('fires onSessionComplete on agent_runtime_end and cleans up on disconnect', () => {
+      withSseMode(() => {
+        const { action, state } = createTestAction();
+        const sse = captureSseConnection();
+        const onSessionComplete = vi.fn();
+
+        action.connectToGateway({
+          gatewayUrl: '',
+          onSessionComplete,
+          operationId: 'op-sse-4',
+          token: 'unused',
+          topicId: TEST_TOPIC_ID,
+        });
+
+        sse.captured.options.onEvent({
+          data: {},
+          operationId: 'op-sse-4',
+          stepIndex: 0,
+          timestamp: Date.now(),
+          type: 'agent_runtime_end',
+        });
+        expect(onSessionComplete).toHaveBeenCalledOnce();
+
+        // onDisconnect should not double-fire session_complete.
+        sse.captured.options.onDisconnect();
+        expect(onSessionComplete).toHaveBeenCalledOnce();
+        expect(state.gatewayConnections['op-sse-4']).toBeUndefined();
+      });
+    });
+
+    it('disconnectFromGateway aborts the SSE controller', () => {
+      withSseMode(() => {
+        const { action, state } = createTestAction();
+        const sse = captureSseConnection();
+
+        action.connectToGateway({
+          gatewayUrl: '',
+          operationId: 'op-sse-5',
+          token: 'unused',
+          topicId: TEST_TOPIC_ID,
+        });
+
+        action.disconnectFromGateway('op-sse-5');
+        expect(sse.ctrl.abort).toHaveBeenCalledOnce();
+        expect(state.gatewayConnections['op-sse-5']).toBeUndefined();
+      });
+    });
+
+    it('passes includeHistory=true only when resumeOnConnect is set', () => {
+      withSseMode(() => {
+        const { action } = createTestAction();
+        const sse = captureSseConnection();
+
+        action.connectToGateway({
+          gatewayUrl: '',
+          operationId: 'op-sse-6a',
+          resumeOnConnect: true,
+          token: 'unused',
+          topicId: TEST_TOPIC_ID,
+        });
+        expect(sse.captured.options.includeHistory).toBe(true);
+
+        sse.sseFactory.mockClear();
+        action.connectToGateway({
+          gatewayUrl: '',
+          operationId: 'op-sse-6b',
+          token: 'unused',
+          topicId: TEST_TOPIC_ID,
+        });
+        expect(sse.captured.options.includeHistory).toBe(false);
+      });
     });
   });
 });

@@ -114,6 +114,10 @@ export const getServerGlobalConfig = async () => {
 
     // Expose Agent Gateway URL to client (used by hetero agents; also required for queue mode)
     ...(appEnv.AGENT_GATEWAY_URL ? { agentGatewayUrl: appEnv.AGENT_GATEWAY_URL } : undefined),
+    // Tell the client whether to pull live events from the external gateway
+    // (default) or this server's own SSE route. Self-host deployments without
+    // their own gateway should set AGENT_GATEWAY_MODE=sse.
+    ...(appEnv.AGENT_GATEWAY_MODE ? { agentGatewayMode: appEnv.AGENT_GATEWAY_MODE } : undefined),
 
     image: cleanObject({
       defaultImageNum: imageEnv.AI_IMAGE_DEFAULT_IMAGE_NUM,

@@ -29,9 +29,11 @@ export const useGatewayReconnect = (
   runningOperation: RunningOperation | null | undefined,
 ) => {
   const agentGatewayUrl = useServerConfigStore((s) => s.serverConfig.agentGatewayUrl);
+  const agentGatewayMode = useServerConfigStore((s) => s.serverConfig.agentGatewayMode);
+  const canReconnect = agentGatewayMode === 'sse' || !!agentGatewayUrl;
 
   useSWR(
-    runningOperation && topicId && agentGatewayUrl
+    runningOperation && topicId && canReconnect
       ? ['reconnectGateway', runningOperation.operationId]
       : null,
     async () => {

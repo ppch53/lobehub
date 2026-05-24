@@ -78,6 +78,17 @@ export const getAppConfig = () => {
       AGENT_GATEWAY_SERVICE_TOKEN: z.string().optional(),
       AGENT_GATEWAY_URL: z.string().url().optional(),
       /**
+       * Where the client should pull live agent execution events from.
+       *
+       * - `gateway` (default): the legacy SaaS path — client opens a WebSocket
+       *   to an external Agent Gateway service (e.g. agent-gateway.lobehub.com)
+       *   which fans out events from this server's Redis Stream.
+       * - `sse`: self-host path — client subscribes directly to this server's
+       *   own `/api/agent/stream` SSE route, which reads the same Redis Stream
+       *   in-process. No external service required.
+       */
+      AGENT_GATEWAY_MODE: z.enum(['gateway', 'sse']).optional(),
+      /**
        * Enable Queue-based Agent Runtime
        * When true, use QStash for async agent execution (production)
        * When false, execute agent steps synchronously in current process (development)
@@ -122,6 +133,10 @@ export const getAppConfig = () => {
 
       AGENT_GATEWAY_SERVICE_TOKEN: process.env.AGENT_GATEWAY_SERVICE_TOKEN,
       AGENT_GATEWAY_URL: process.env.AGENT_GATEWAY_URL,
+      AGENT_GATEWAY_MODE:
+        process.env.AGENT_GATEWAY_MODE === 'sse' || process.env.AGENT_GATEWAY_MODE === 'gateway'
+          ? process.env.AGENT_GATEWAY_MODE
+          : undefined,
       enableQueueAgentRuntime: process.env.AGENT_RUNTIME_MODE === 'queue',
       TELEMETRY_DISABLED: process.env.TELEMETRY_DISABLED === '1',
     },

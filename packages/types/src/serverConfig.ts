@@ -53,6 +53,14 @@ export type ServerLanguageModel = Partial<Record<GlobalLLMProviderKey, ServerMod
 
 export interface GlobalServerConfig {
   /**
+   * How the client should pull live agent execution events.
+   * - `gateway` (default): connect to the external Agent Gateway WebSocket.
+   * - `sse`: subscribe directly to this server's `/api/agent/stream` SSE route,
+   *   skipping the external gateway. Used by self-host deployments that don't
+   *   run their own gateway service.
+   */
+  agentGatewayMode?: 'gateway' | 'sse';
+  /**
    * Agent Gateway URL for WebSocket-based agent execution.
    * When set, the SPA can offload agent execution to the server and receive
    * events via the Gateway instead of running the agent loop client-side.
