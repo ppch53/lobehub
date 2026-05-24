@@ -258,6 +258,36 @@ describe('HeterogeneousPersistenceHandler', () => {
         }),
       ).rejects.toThrow(/already bound to topic/);
     });
+
+    // Regression for 2026-05-25: client optimistically writes "..." (LOADING_FLAT)
+    // to the assistant message before the agent's first chunk arrives. The handler's
+    // refresh-from-DB step would then see dbContent="..." (3 chars), find it longer
+    // than the in-memory accumulator (0 chars), and adopt it as a prefix — producing
+    // "...你好我是 Gemini CLI..." instead of "你好我是 Gemini CLI...".
+    it('treats LOADING_FLAT placeholder ("...") in DB as empty when seeding accumulatedContent', async () => {
+      const h = createHarness({
+        assistantMessageId: 'asst-seeded',
+        operationId: 'op-1',
+        topicAgentId: 'agent-1',
+        topicId: 'topic-1',
+      });
+
+      // Simulate the client-side optimistic placeholder write that happens
+      // before any agent events arrive.
+      h.messages.set('asst-seeded', {
+        ...h.messages.get('asst-seeded')!,
+        content: '...',
+      });
+
+      await h.handler.ingest({
+        events: [buildEvent('stream_chunk', 0, { chunkType: 'text', content: '你好' })],
+        operationId: 'op-1',
+        topicId: 'topic-1',
+      });
+
+      expect(h.messageModel.update).toHaveBeenCalledWith('asst-seeded', { content: '你好' });
+      expect(h.messages.get('asst-seeded')?.content).toBe('你好');
+    });
   });
 
   describe('idempotency', () => {

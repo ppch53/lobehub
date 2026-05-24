@@ -1,4 +1,5 @@
 import type { AgentStreamEvent } from '@lobechat/agent-gateway-client';
+import { LOADING_FLAT } from '@lobechat/const';
 import {
   AgentRuntimeErrorType,
   type ChatMessageError,
@@ -269,7 +270,11 @@ export class HeterogeneousPersistenceHandler {
     // already read the message in `loadOrCreateState` — the second read is
     // redundant but harmless and keeps the logic uniform).
     const refreshed = await this.deps.messageModel.findById(state.currentAssistantMessageId);
-    const dbContent = (refreshed?.content ?? '') as string;
+    // Treat the client-side LOADING_FLAT placeholder ("...") as empty so we
+    // don't accidentally adopt it as a content prefix when the agent's first
+    // real chunk arrives — that's what causes "...你好" leading-ellipsis bugs.
+    const rawDbContent = (refreshed?.content ?? '') as string;
+    const dbContent = rawDbContent === LOADING_FLAT ? '' : rawDbContent;
     const dbReasoning = (refreshed?.reasoning as { content?: string } | null)?.content ?? '';
 
     // Adopt DB value only when it is LONGER than what this instance holds in memory.
@@ -457,7 +462,10 @@ export class HeterogeneousPersistenceHandler {
     //     persisted tool messages, and overwrites assistant.tools[] with only the
     //     current batch's tools (losing all previous ones).
     const currentMsg = await this.deps.messageModel.findById(currentAssistantMessageId);
-    const restoredContent = (currentMsg?.content ?? '') as string;
+    // Treat the LOADING_FLAT placeholder ("...") as empty so a cold-start
+    // restore doesn't seed accumulatedContent with the client's loading dots.
+    const rawRestoredContent = (currentMsg?.content ?? '') as string;
+    const restoredContent = rawRestoredContent === LOADING_FLAT ? '' : rawRestoredContent;
     const restoredReasoning = (currentMsg?.reasoning as { content?: string } | null)?.content ?? '';
     const restoredTools = (currentMsg?.tools ?? []) as ChatToolPayload[];
     // Phase 1 of `persistToolBatch` writes `tools[]` BEFORE the tool message
@@ -521,7 +529,10 @@ export class HeterogeneousPersistenceHandler {
     }
 
     const currentMsg = await this.deps.messageModel.findById(authoritativeAssistantMessageId);
-    const restoredContent = (currentMsg?.content ?? '') as string;
+    // Treat the LOADING_FLAT placeholder ("...") as empty so reconciling onto
+    // a freshly-created assistant row doesn't seed it with loading dots.
+    const rawRestoredContent = (currentMsg?.content ?? '') as string;
+    const restoredContent = rawRestoredContent === LOADING_FLAT ? '' : rawRestoredContent;
     const restoredReasoning = (currentMsg?.reasoning as { content?: string } | null)?.content ?? '';
     const restoredTools = (currentMsg?.tools ?? []) as ChatToolPayload[];
 
