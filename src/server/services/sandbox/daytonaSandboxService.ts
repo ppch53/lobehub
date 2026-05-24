@@ -64,6 +64,11 @@ interface DaytonaConfigResponse {
   proxyToolboxUrl?: string;
 }
 
+interface DaytonaSandboxPage {
+  items?: DaytonaSandbox[];
+  nextCursor?: string;
+}
+
 interface DaytonaExecuteResponse {
   cmdId?: string;
   exitCode?: number;
@@ -166,6 +171,11 @@ const getLastNonEmptyLine = (value: string) =>
     .split(/\r?\n/)
     .map((line) => line.trim())
     .findLast(Boolean);
+
+const unwrapSandboxList = (page: DaytonaSandboxPage | DaytonaSandbox[] | null | undefined) => {
+  if (Array.isArray(page)) return page;
+  return page?.items ?? [];
+};
 
 const getFileName = (path: string) => path.split('/').findLast(Boolean) || 'exported_file';
 
@@ -517,12 +527,12 @@ export class DaytonaSandboxService implements ISandboxService {
     const query = new URLSearchParams({ labels: JSON.stringify(labels) });
 
     try {
-      const sandboxes = await this.requestApi<DaytonaSandbox[]>('GET', `sandbox?${query}`);
-      return this.pickReusableSandbox(sandboxes);
+      const page = await this.requestApi<DaytonaSandboxPage>('GET', `sandbox?${query}`);
+      return this.pickReusableSandbox(unwrapSandboxList(page));
     } catch (error) {
       log('Label-filtered Daytona sandbox list failed, falling back to full list: %O', error);
-      const sandboxes = await this.requestApi<DaytonaSandbox[]>('GET', 'sandbox');
-      return this.pickReusableSandbox(sandboxes);
+      const page = await this.requestApi<DaytonaSandboxPage>('GET', 'sandbox');
+      return this.pickReusableSandbox(unwrapSandboxList(page));
     }
   }
 
