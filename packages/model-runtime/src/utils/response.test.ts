@@ -9,7 +9,8 @@ describe('StreamingResponse', () => {
 
     expect(response).toBeInstanceOf(Response);
     expect(response.body).toBe(mockStream);
-    expect(response.headers.get('Cache-Control')).toBe('no-cache');
+    expect(response.headers.get('Cache-Control')).toBe('no-cache, no-transform');
+    expect(response.headers.get('Connection')).toBe('keep-alive');
     expect(response.headers.get('Content-Type')).toBe('text/event-stream');
     expect(response.headers.get('X-Accel-Buffering')).toBe('no');
   });
@@ -27,7 +28,8 @@ describe('StreamingResponse', () => {
     expect(response.body).toBe(mockStream);
 
     // Default headers should still be present
-    expect(response.headers.get('Cache-Control')).toBe('no-cache');
+    expect(response.headers.get('Cache-Control')).toBe('no-cache, no-transform');
+    expect(response.headers.get('Connection')).toBe('keep-alive');
     expect(response.headers.get('Content-Type')).toBe('text/event-stream');
     expect(response.headers.get('X-Accel-Buffering')).toBe('no');
 
@@ -47,6 +49,7 @@ describe('StreamingResponse', () => {
 
     expect(response.headers.get('Content-Type')).toBe('application/json');
     expect(response.headers.get('Cache-Control')).toBe('max-age=3600');
+    expect(response.headers.get('Connection')).toBe('keep-alive');
     expect(response.headers.get('X-Accel-Buffering')).toBe('no');
   });
 
@@ -56,7 +59,8 @@ describe('StreamingResponse', () => {
 
     expect(response).toBeInstanceOf(Response);
     expect(response.body).toBe(mockStream);
-    expect(response.headers.get('Cache-Control')).toBe('no-cache');
+    expect(response.headers.get('Cache-Control')).toBe('no-cache, no-transform');
+    expect(response.headers.get('Connection')).toBe('keep-alive');
     expect(response.headers.get('Content-Type')).toBe('text/event-stream');
     expect(response.headers.get('X-Accel-Buffering')).toBe('no');
   });
@@ -67,7 +71,8 @@ describe('StreamingResponse', () => {
 
     expect(response).toBeInstanceOf(Response);
     expect(response.body).toBe(mockStream);
-    expect(response.headers.get('Cache-Control')).toBe('no-cache');
+    expect(response.headers.get('Cache-Control')).toBe('no-cache, no-transform');
+    expect(response.headers.get('Connection')).toBe('keep-alive');
     expect(response.headers.get('Content-Type')).toBe('text/event-stream');
     expect(response.headers.get('X-Accel-Buffering')).toBe('no');
   });

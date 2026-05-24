@@ -4,7 +4,8 @@ export const StreamingResponse = (
 ) => {
   return new Response(stream, {
     headers: {
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
       'Content-Type': 'text/event-stream',
       // for Nginx: disable chunk buffering
       'X-Accel-Buffering': 'no',
