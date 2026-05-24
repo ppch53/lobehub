@@ -47,6 +47,8 @@ const DENIED_AGENT_ENV_PATTERNS = [
 ] as const;
 
 const activeOperations = new Set<string>();
+const LOCAL_STREAM_FLUSH_INTERVAL_MS = 250;
+const LOCAL_STREAM_MAX_BATCH_SIZE = 4;
 
 export interface LocalRunParams {
   agentType: string;
@@ -340,13 +342,36 @@ export async function spawnHeteroLocal(params: LocalRunParams): Promise<void> {
     });
 
     const batch: AgentStreamEvent[] = [];
+    let flushTimer: NodeJS.Timeout | undefined;
+
+    const flushBatch = async (): Promise<void> => {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = undefined;
+      }
+      if (batch.length === 0) return;
+      await ingestBatch(batch.splice(0));
+    };
+
+    const scheduleFlush = () => {
+      if (flushTimer) return;
+      flushTimer = setTimeout(() => {
+        flushTimer = undefined;
+        void flushBatch().catch((error) => {
+          log('spawnHeteroLocal: timed flush failed op=%s err=%O', operationId, error);
+        });
+      }, LOCAL_STREAM_FLUSH_INTERVAL_MS);
+    };
+
     for await (const event of handle.events) {
       batch.push(event);
-      if (batch.length >= 20) {
-        await ingestBatch(batch.splice(0));
+      if (batch.length >= LOCAL_STREAM_MAX_BATCH_SIZE) {
+        await flushBatch();
+      } else {
+        scheduleFlush();
       }
     }
-    await ingestBatch(batch.splice(0));
+    await flushBatch();
 
     const exit = await handle.exit;
     sessionId = handle.sessionId;

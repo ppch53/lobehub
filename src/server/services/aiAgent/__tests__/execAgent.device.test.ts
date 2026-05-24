@@ -16,9 +16,15 @@ const { mockCreateOperation, mockCreateServerAgentToolsEngine, mockMessageCreate
 
 const { mockDeviceProxy } = vi.hoisted(() => ({
   mockDeviceProxy: {
+    dispatchAgentRun: vi.fn().mockResolvedValue({ success: true }),
     isConfigured: false,
     queryDeviceList: vi.fn().mockResolvedValue([]),
   },
+}));
+
+vi.mock('@/libs/trpc/utils/internalJwt', () => ({
+  signOperationJwt: vi.fn().mockResolvedValue('operation-jwt'),
+  signUserJWT: vi.fn().mockResolvedValue('gateway-jwt'),
 }));
 
 vi.mock('@/libs/trusted-client', () => ({
@@ -95,6 +101,12 @@ vi.mock('@/server/services/agentRuntime', () => ({
   })),
 }));
 
+vi.mock('@/server/modules/AgentRuntime/factory', () => ({
+  createStreamEventManager: vi.fn(() => ({
+    publishStreamEvent: vi.fn(),
+  })),
+}));
+
 vi.mock('@/server/services/market', () => ({
   MarketService: vi.fn().mockImplementation(() => ({
     getLobehubSkillManifests: vi.fn().mockResolvedValue([]),
@@ -155,6 +167,7 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
     });
     // Reset device proxy state
     mockDeviceProxy.isConfigured = false;
+    mockDeviceProxy.dispatchAgentRun.mockResolvedValue({ success: true });
     mockDeviceProxy.queryDeviceList.mockResolvedValue([]);
 
     service = new AiAgentService(mockDb, userId);
@@ -661,6 +674,60 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
 
       const toolsEngineArgs = mockCreateServerAgentToolsEngine.mock.calls[0][1];
       expect(toolsEngineArgs.deviceContext.autoActivated).toBeUndefined();
+    });
+  });
+
+  describe('heterogeneous desktop agent dispatch', () => {
+    it('auto-binds a web-created Codex App agent to the only online desktop device', async () => {
+      mockDeviceProxy.isConfigured = true;
+      mockDeviceProxy.queryDeviceList.mockResolvedValue([onlineDevice]);
+
+      const { AgentService } = await import('@/server/services/agent');
+      vi.mocked(AgentService).mockImplementation(
+        () =>
+          ({
+            getAgentConfig: vi.fn().mockResolvedValue({
+              agencyConfig: {
+                heterogeneousProvider: {
+                  command: 'codex',
+                  protocol: 'codex-app-server',
+                  type: 'codex-app',
+                },
+              },
+              chatConfig: {},
+              files: [],
+              id: 'agent-1',
+              knowledgeBases: [],
+              model: 'codex-app',
+              plugins: [],
+              provider: 'codex-app',
+              systemRole: '',
+            }),
+          }) as any,
+      );
+
+      service = new AiAgentService(mockDb, userId);
+
+      const result = await service.execAgent({
+        agentId: 'agent-1',
+        prompt: 'Use Codex App Server',
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockDeviceProxy.dispatchAgentRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentType: 'codex-app',
+          command: 'codex',
+          deviceId: 'device-001',
+          jwt: 'operation-jwt',
+          protocol: 'codex-app-server',
+          userId,
+        }),
+      );
+      expect(topicMock.updateMetadata).toHaveBeenCalledWith(
+        'topic-1',
+        expect.objectContaining({ boundDeviceId: 'device-001' }),
+      );
     });
   });
 });

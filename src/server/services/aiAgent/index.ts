@@ -718,7 +718,7 @@ export class AiAgentService {
         topicMetadata?.workingDirectory ??
         agentConfig.chatConfig?.runtimeEnv?.workingDirectory ??
         heterogeneousProvider?.cwd;
-      const effectiveDeviceId =
+      let effectiveDeviceId =
         requestedDeviceId ??
         topicMetadata?.boundDeviceId ??
         agentConfig.agencyConfig?.boundDeviceId;
@@ -791,62 +791,73 @@ export class AiAgentService {
         }).catch((err) => {
           log('execAgent: hetero local spawn failed: %O', err);
         });
-      } else if (effectiveDeviceId) {
-        // Dispatch to the user's connected desktop via device-gateway.
-        const result = await deviceProxy.dispatchAgentRun({
-          ...heteroParams,
-          deviceId: effectiveDeviceId,
-          jwt: await getOperationJwt(),
-          userId: this.userId,
-        });
-        if (!result.success) {
-          log('execAgent: hetero device dispatch failed: %s', result.error);
-          return failHeteroDispatch(
-            'Hetero agent device dispatch failed',
-            result.error ?? 'Device dispatch failed',
-          );
-        }
-      } else if (process.env.ENABLE_CLOUD_SANDBOX_FALLBACK === 'true') {
-        let githubToken: string | undefined;
-        const githubCredKey = heterogeneousProvider?.env?.GITHUB_CRED_KEY ?? 'github';
-        try {
-          const list = await this.marketService.market.creds.list();
-          const cred = list.data?.find((c: { key: string }) => c.key === githubCredKey);
-          if (cred) {
-            const full = await this.marketService.market.creds.get(cred.id, { decrypt: true });
-            const vals = (full as any).plaintext ?? (full as any).values ?? {};
-            githubToken = vals.access_token ?? vals.token;
+      } else {
+        if (!effectiveDeviceId && deviceProxy.isConfigured) {
+          const onlineDevices = await deviceProxy.queryDeviceList(this.userId);
+          if (onlineDevices.length === 1) {
+            effectiveDeviceId = onlineDevices[0].deviceId;
+            await this.topicModel.updateMetadata(topicId, { boundDeviceId: effectiveDeviceId });
+            log('execAgent: auto-bound hetero run to the only online device %s', effectiveDeviceId);
           }
-        } catch (err) {
-          log('execAgent: failed to resolve GitHub token: %O', err);
         }
 
-        const { buildCloudHeteroContext } =
-          await import('@/server/services/heterogeneousAgent/cloudHeteroContext');
-        const systemContext = buildCloudHeteroContext({
-          agentSystemContext: heterogeneousProvider?.systemContext,
-          githubToken,
-          repos: topicRepos,
-        });
-        // Cloud sandbox path — fire-and-forget; errors surfaced via heteroFinish.
-        const { spawnHeteroSandbox } =
-          await import('@/server/services/heterogeneousAgent/sandboxRunner');
-        spawnHeteroSandbox({
-          ...heteroParams,
-          githubToken,
-          jwt: await getOperationJwt(),
-          marketService: this.marketService,
-          repos: topicRepos,
-          systemContext,
-          userId: this.userId,
-        }).catch((err) => {
-          log('execAgent: hetero sandbox spawn failed: %O', err);
-        });
-      } else {
-        return failHeteroDispatch(
-          'No desktop device is bound for this heterogeneous agent',
-          'Bind an online desktop device, or set ENABLE_CLOUD_SANDBOX_FALLBACK=true to use sandbox fallback.',
-        );
+        if (effectiveDeviceId) {
+          // Dispatch to the user's connected desktop via device-gateway.
+          const result = await deviceProxy.dispatchAgentRun({
+            ...heteroParams,
+            deviceId: effectiveDeviceId,
+            jwt: await getOperationJwt(),
+            userId: this.userId,
+          });
+          if (!result.success) {
+            log('execAgent: hetero device dispatch failed: %s', result.error);
+            return failHeteroDispatch(
+              'Hetero agent device dispatch failed',
+              result.error ?? 'Device dispatch failed',
+            );
+          }
+        } else if (process.env.ENABLE_CLOUD_SANDBOX_FALLBACK === 'true') {
+          let githubToken: string | undefined;
+          const githubCredKey = heterogeneousProvider?.env?.GITHUB_CRED_KEY ?? 'github';
+          try {
+            const list = await this.marketService.market.creds.list();
+            const cred = list.data?.find((c: { key: string }) => c.key === githubCredKey);
+            if (cred) {
+              const full = await this.marketService.market.creds.get(cred.id, { decrypt: true });
+              const vals = (full as any).plaintext ?? (full as any).values ?? {};
+              githubToken = vals.access_token ?? vals.token;
+            }
+          } catch (err) {
+            log('execAgent: failed to resolve GitHub token: %O', err);
+          }
+
+          const { buildCloudHeteroContext } =
+            await import('@/server/services/heterogeneousAgent/cloudHeteroContext');
+          const systemContext = buildCloudHeteroContext({
+            agentSystemContext: heterogeneousProvider?.systemContext,
+            githubToken,
+            repos: topicRepos,
+          });
+          // Cloud sandbox path — fire-and-forget; errors surfaced via heteroFinish.
+          const { spawnHeteroSandbox } =
+            await import('@/server/services/heterogeneousAgent/sandboxRunner');
+          spawnHeteroSandbox({
+            ...heteroParams,
+            githubToken,
+            jwt: await getOperationJwt(),
+            marketService: this.marketService,
+            repos: topicRepos,
+            systemContext,
+            userId: this.userId,
+          }).catch((err) => {
+            log('execAgent: hetero sandbox spawn failed: %O', err);
+          });
+        } else {
+          return failHeteroDispatch(
+            'No desktop device is bound for this heterogeneous agent',
+            'Bind an online desktop device, or set ENABLE_CLOUD_SANDBOX_FALLBACK=true to use sandbox fallback.',
+          );
+        }
       }
 
       let gatewayToken: string | undefined;
