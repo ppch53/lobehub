@@ -1,7 +1,12 @@
 name: lobehub
 services:
   lobe:
-    image: lobehub/lobehub
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        USE_CN_MIRROR: 'true'
+    image: lobehub-gemini:local
     container_name: lobehub
     ports:
       - '${LOBE_PORT}:3210'
@@ -31,6 +36,23 @@ services:
       - 'REDIS_URL=redis://redis:6379'
       - 'REDIS_PREFIX=lobechat'
       - 'REDIS_TLS=0'
+      - 'AGENT_GATEWAY_URL=${AGENT_GATEWAY_URL}'
+      - 'AGENT_GATEWAY_SERVICE_TOKEN=${AGENT_GATEWAY_SERVICE_TOKEN}'
+      - 'DEVICE_GATEWAY_URL=${DEVICE_GATEWAY_URL}'
+      - 'DEVICE_GATEWAY_SERVICE_TOKEN=${DEVICE_GATEWAY_SERVICE_TOKEN}'
+      - 'ENABLE_CLOUD_SANDBOX_FALLBACK=${ENABLE_CLOUD_SANDBOX_FALLBACK:-false}'
+      - 'GEMINI_CLI_TRUST_WORKSPACE=${GEMINI_CLI_TRUST_WORKSPACE:-true}'
+      - 'HETERO_LOCAL_CWD_ALLOWLIST=${HETERO_LOCAL_CWD_ALLOWLIST:-/workspace:/app}'
+      - 'HETERO_LOCAL_DEFAULT_CWD=${HETERO_LOCAL_DEFAULT_CWD:-/workspace}'
+      - 'DAYTONA_API_URL=${DAYTONA_API_URL:-https://app.daytona.io/api}'
+      - 'DAYTONA_API_KEY=${DAYTONA_API_KEY:-}'
+      - 'DAYTONA_PROXY_URL=${DAYTONA_PROXY_URL:-https://proxy.app.daytona.io/toolbox}'
+      - 'DAYTONA_SNAPSHOT=${DAYTONA_SNAPSHOT:-daytonaio/sandbox:0.8.0}'
+      - 'DAYTONA_AUTO_STOP_INTERVAL=${DAYTONA_AUTO_STOP_INTERVAL:-15}'
+      - 'DAYTONA_SHELL=${DAYTONA_SHELL:-/bin/bash}'
+    volumes:
+      - 'gemini-data:/app/.gemini'
+      - 'workspace-data:/workspace'
     env_file:
       - .env
     restart: always
@@ -138,7 +160,11 @@ networks:
     driver: bridge
 
 volumes:
+  gemini-data:
+    driver: local
   redis_data:
     driver: local
   rustfs-data:
+    driver: local
+  workspace-data:
     driver: local

@@ -67,12 +67,16 @@ export class DeviceProxy {
   }
 
   async dispatchAgentRun(params: {
-    agentType: 'claude-code' | 'codex';
+    agentType: string;
+    args?: string[];
+    command?: string;
     cwd?: string;
     deviceId?: string;
+    env?: Record<string, string>;
     jwt: string;
     operationId: string;
     prompt: string;
+    protocol?: string;
     resumeSessionId?: string;
     topicId: string;
     userId: string;

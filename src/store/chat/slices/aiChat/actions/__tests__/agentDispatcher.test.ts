@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { selectRuntimeType } from '../agentDispatcher';
 
 const heteroProvider = { command: 'claude', type: 'claude-code' as const };
+const serverLocalHeteroProvider = {
+  command: 'gemini',
+  spawnLocal: true,
+  type: 'gemini-cli',
+} as const;
 
 describe('selectRuntimeType', () => {
   describe('on web (isDesktop = false)', () => {
@@ -36,6 +41,15 @@ describe('selectRuntimeType', () => {
       expect(
         selectRuntimeType({ heterogeneousProvider: heteroProvider, isGatewayMode: false }, opts),
       ).toBe('hetero');
+    });
+
+    it('routes spawnLocal heterogeneousProvider through the server even on desktop', () => {
+      expect(
+        selectRuntimeType(
+          { heterogeneousProvider: serverLocalHeteroProvider, isGatewayMode: false },
+          opts,
+        ),
+      ).toBe('gateway');
     });
 
     it('falls back to gateway/client when no hetero provider', () => {

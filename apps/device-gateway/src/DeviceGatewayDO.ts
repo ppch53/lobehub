@@ -294,12 +294,16 @@ export class DeviceGatewayDO extends DurableObject<Env> {
     }
 
     const body = (await request.json()) as {
-      agentType: 'claude-code' | 'codex';
+      agentType: string;
+      args?: string[];
+      command?: string;
       cwd?: string;
       deviceId?: string;
+      env?: Record<string, string>;
       jwt: string;
       operationId: string;
       prompt: string;
+      protocol?: string;
       resumeSessionId?: string;
       timeout?: number;
       topicId: string;

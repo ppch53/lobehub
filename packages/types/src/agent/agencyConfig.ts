@@ -8,8 +8,17 @@ export interface HeterogeneousProviderConfig {
   args?: string[];
   /** Command to spawn the agent (e.g. 'claude') */
   command?: string;
+  /** Server-side working directory override. Topic/runtime workingDirectory takes priority. */
+  cwd?: string;
   /** Custom environment variables */
   env?: Record<string, string>;
+  /** Transport/runtime protocol hint for remote desktop receivers. */
+  protocol?: string;
+  /**
+   * Run this heterogeneous agent on the LobeHub server process instead of
+   * dispatching it to a desktop device through device-gateway.
+   */
+  spawnLocal?: boolean;
   /**
    * Static context prepended to every user prompt before it reaches the agent CLI.
    * Use this to prime the agent with workspace conventions, rules, or instructions
@@ -18,7 +27,7 @@ export interface HeterogeneousProviderConfig {
    */
   systemContext?: string;
   /** Agent runtime type */
-  type: 'claude-code' | 'codex';
+  type: string;
 }
 
 /**

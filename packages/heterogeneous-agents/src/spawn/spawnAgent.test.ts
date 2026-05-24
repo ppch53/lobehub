@@ -192,6 +192,59 @@ describe('spawnAgent', () => {
     expect(args).toContain('--full-auto');
   });
 
+  it('uses the Codex CLI fallback args for codex-app', async () => {
+    nextFakeProc = createFakeProc().proc;
+    const { spawnAgent } = await import('./spawnAgent');
+    await spawnAgent({ agentType: 'codex-app', operationId: 'op-1', prompt: 'hello' });
+
+    const { args, command } = spawnCalls[0];
+    expect(command).toBe('codex');
+    expect(args[0]).toBe('exec');
+    expect(args).toContain('--json');
+  });
+
+  it('builds gemini args with stream-json flags and prompt in argv', async () => {
+    nextFakeProc = createFakeProc().proc;
+    const { spawnAgent } = await import('./spawnAgent');
+    await spawnAgent({ agentType: 'gemini-cli', operationId: 'op-1', prompt: 'hello gemini' });
+
+    const { args, command } = spawnCalls[0];
+    expect(command).toBe('gemini');
+    expect(args).toEqual([
+      '--output-format',
+      'stream-json',
+      '--approval-mode',
+      'yolo',
+      '--skip-trust',
+      '--prompt',
+      'hello gemini',
+    ]);
+    expect((nextFakeProc as any).stdin.write.mock.calls[0][0]).toBe('');
+  });
+
+  it('passes gemini resume id before --prompt', async () => {
+    nextFakeProc = createFakeProc().proc;
+    const { spawnAgent } = await import('./spawnAgent');
+    await spawnAgent({
+      agentType: 'gemini-cli',
+      operationId: 'op-1',
+      prompt: 'continue',
+      resumeSessionId: 'gemini-session-1',
+    });
+
+    const { args } = spawnCalls[0];
+    expect(args.slice(0, 7)).toEqual([
+      '--output-format',
+      'stream-json',
+      '--approval-mode',
+      'yolo',
+      '--skip-trust',
+      '--resume',
+      'gemini-session-1',
+    ]);
+    expect(args.slice(7)).toEqual(['--prompt', 'continue']);
+  });
+
   it('spawns the Windows executable resolved by the shared CLI spawn plan', async () => {
     platformMock.mockReturnValue('win32');
     callExecFile('C:\\Tools\\codex.exe\r\n');

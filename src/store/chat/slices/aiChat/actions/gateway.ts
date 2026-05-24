@@ -10,6 +10,8 @@ import { isDesktop } from '@/const/version';
 import { aiAgentService, type ResumeApprovalParam } from '@/services/aiAgent';
 import { messageService } from '@/services/message';
 import { topicService } from '@/services/topic';
+import { getAgentStoreState } from '@/store/agent';
+import { agentSelectors } from '@/store/agent/selectors';
 import { consumePendingTopicRepos, getPendingTopicRepos } from '@/store/chat/pendingTopicRepos';
 import type { ChatStore } from '@/store/chat/store';
 import type { StoreSetter } from '@/store/types';
@@ -299,8 +301,15 @@ export class GatewayActionImpl {
     // sending the first message. We read without consuming yet — if execAgentTask
     // fails or is aborted, the selection is preserved so a retry can still pick
     // it up. We clear only after the server confirms the topic was created.
+    const heterogeneousProvider = context.agentId
+      ? agentSelectors.getAgentConfigById(context.agentId)(getAgentStoreState())?.agencyConfig
+          ?.heterogeneousProvider
+      : undefined;
+    const isServerLocalHeterogeneous = !!heterogeneousProvider?.spawnLocal;
     const pendingRepos =
-      isCreateNewTopic && context.agentId ? getPendingTopicRepos(context.agentId) : [];
+      isCreateNewTopic && context.agentId && !isServerLocalHeterogeneous
+        ? getPendingTopicRepos(context.agentId)
+        : [];
     const initialTopicMetadata =
       pendingRepos.length > 0
         ? { repos: pendingRepos, workingDirectory: pendingRepos[0] }
@@ -355,7 +364,7 @@ export class GatewayActionImpl {
     // (same pattern as client mode: replaceMessages before switchTopic to avoid skeleton flash)
     if (isCreateNewTopic && result.topicId) {
       // Topic created successfully — now safe to clear the pending repo selection.
-      if (context.agentId) consumePendingTopicRepos(context.agentId);
+      if (context.agentId && !isServerLocalHeterogeneous) consumePendingTopicRepos(context.agentId);
       try {
         const newContext = { ...context, topicId: result.topicId };
         const messages = await messageService.getMessages(newContext);

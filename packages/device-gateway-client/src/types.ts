@@ -90,11 +90,15 @@ export interface SystemInfoResponseMessage {
 
 /** Server → Client: request the desktop to spawn `lh hetero exec`. */
 export interface AgentRunRequestMessage {
-  agentType: 'claude-code' | 'codex';
+  agentType: string;
+  args?: string[];
+  command?: string;
   cwd?: string;
+  env?: Record<string, string>;
   jwt: string;
   operationId: string;
   prompt: string;
+  protocol?: string;
   resumeSessionId?: string;
   topicId: string;
   type: 'agent_run_request';

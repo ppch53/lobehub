@@ -15,7 +15,7 @@ import { BatchIngester, NoopIngestSink } from '../utils/BatchIngester';
 import { log } from '../utils/logger';
 import { TrpcIngestSink } from '../utils/TrpcIngestSink';
 
-const SUPPORTED_AGENT_TYPES = new Set(['claude-code', 'codex']);
+const SUPPORTED_AGENT_TYPES = new Set(['claude-code', 'codex', 'codex-app', 'gemini-cli']);
 
 interface ExecOptions {
   command?: string;
@@ -77,7 +77,7 @@ const parseImageArg = (value: string): AgentImageSource => {
   if (value.startsWith('data:')) {
     const match = value.match(/^data:([^;,]+);base64,(.+)$/);
     if (!match) {
-      throw new Error(`Invalid data URL for --image: ${value.slice(0, 40)}…`);
+      throw new Error(`Invalid data URL for --image: ${value.slice(0, 40)}...`);
     }
     return { data: match[2]!, mediaType: match[1]!, type: 'base64' };
   }
@@ -208,7 +208,7 @@ const exec = async (options: ExecOptions): Promise<void> => {
   // Build the ingest sink — no-op for standalone mode, real tRPC sink for
   // server-ingest mode.  The tRPC client reads LOBEHUB_JWT (operation-scoped
   // JWT injected by the server) for authentication.
-  const agentType = options.type as 'claude-code' | 'codex';
+  const agentType = options.type;
   let sink: InstanceType<typeof TrpcIngestSink> | InstanceType<typeof NoopIngestSink>;
   if (serverIngest) {
     const client = await getTrpcClient();
@@ -340,7 +340,9 @@ const exec = async (options: ExecOptions): Promise<void> => {
 export function registerHeteroCommand(program: Command) {
   const hetero = program
     .command('hetero')
-    .description('Run heterogeneous agent CLIs (Claude Code / Codex) and stream their output');
+    .description(
+      'Run heterogeneous agent CLIs (Claude Code / Codex / Gemini CLI) and stream their output',
+    );
 
   hetero
     .command('exec')
@@ -362,7 +364,7 @@ export function registerHeteroCommand(program: Command) {
     .option('-d, --cwd <path>', 'Working directory for the spawned agent (default: process.cwd())')
     .option(
       '-c, --command <bin>',
-      'Override the agent CLI binary name (default: `claude` or `codex`)',
+      'Override the agent CLI binary name (default: `claude`, `codex`, or `gemini`)',
     )
     .option(
       '--operation-id <id>',

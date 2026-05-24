@@ -1,5 +1,5 @@
 import { type HeterogeneousAgentClientConfig } from '@lobechat/heterogeneous-agents/client';
-import { ClaudeCode, Codex } from '@lobehub/icons';
+import { ClaudeCode, Codex, Gemini } from '@lobehub/icons';
 import { createElement } from 'react';
 
 import type { RecommendedAction } from './types';
@@ -7,7 +7,9 @@ import type { RecommendedAction } from './types';
 const avatarIcons = {
   'claude-code': ClaudeCode.Avatar,
   'codex': Codex.Avatar,
-} as const satisfies Record<HeterogeneousAgentClientConfig['type'], unknown>;
+  'codex-app': Codex.Avatar,
+  'gemini-cli': Gemini.Avatar,
+} as const;
 
 /**
  * Build a "Add <Brand> agent" recommendation card for a heterogeneous CLI agent
@@ -17,7 +19,7 @@ const avatarIcons = {
 export const buildHeteroAgentAction = (
   config: HeterogeneousAgentClientConfig,
 ): RecommendedAction => {
-  const Avatar = avatarIcons[config.type];
+  const Avatar = avatarIcons[config.type as keyof typeof avatarIcons] ?? ClaudeCode.Avatar;
 
   return {
     ctaKey: 'recommendations.heteroAgent.cta',

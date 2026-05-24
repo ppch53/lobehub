@@ -14,7 +14,7 @@ import { HeterogeneousPersistenceHandler } from './HeterogeneousPersistenceHandl
 
 const log = debug('lobe-server:hetero-agent-service');
 
-export type HeterogeneousAgentType = 'claude-code' | 'codex';
+export type HeterogeneousAgentType = string;
 
 export type HeterogeneousFinishResult = 'success' | 'error' | 'cancelled';
 

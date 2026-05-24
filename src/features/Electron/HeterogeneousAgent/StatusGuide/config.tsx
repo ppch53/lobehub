@@ -3,8 +3,10 @@ import {
   CLAUDE_CODE_CLI_INSTALL_DOCS_URL,
   CODEX_CLI_INSTALL_COMMANDS,
   CODEX_CLI_INSTALL_DOCS_URL,
+  GEMINI_CLI_INSTALL_COMMANDS,
+  GEMINI_CLI_INSTALL_DOCS_URL,
 } from '@lobechat/electron-client-ipc';
-import { ClaudeCode, Codex } from '@lobehub/icons';
+import { ClaudeCode, Codex, Gemini } from '@lobehub/icons';
 
 import {
   type HeterogeneousAgentGuideConfig,
@@ -28,6 +30,22 @@ export const HETEROGENEOUS_AGENT_GUIDE_CONFIG = {
     signInCommand: 'codex',
     title: 'Codex',
     translationPrefix: 'codexInstallGuide',
+  },
+  'codex-app': {
+    docsUrl: CODEX_CLI_INSTALL_DOCS_URL,
+    icon: Codex,
+    installCommands: CODEX_CLI_INSTALL_COMMANDS,
+    signInCommand: 'codex',
+    title: 'Codex App Server',
+    translationPrefix: 'codexInstallGuide',
+  },
+  'gemini-cli': {
+    docsUrl: GEMINI_CLI_INSTALL_DOCS_URL,
+    icon: Gemini,
+    installCommands: GEMINI_CLI_INSTALL_COMMANDS,
+    signInCommand: 'gemini',
+    title: 'Gemini CLI',
+    translationPrefix: 'geminiCliInstallGuide',
   },
 } as const satisfies Record<SupportedHeterogeneousAgentType, HeterogeneousAgentGuideConfig>;
 

@@ -1,14 +1,20 @@
-import type { HeterogeneousProviderConfig } from '@lobechat/types';
+export type HeterogeneousCliAgentType = 'claude-code' | 'codex' | 'codex-app' | 'gemini-cli';
 
-export type HeterogeneousAgentMenuLabelKey = 'newClaudeCodeAgent' | 'newCodexAgent';
+export type HeterogeneousAgentMenuLabelKey =
+  | 'newClaudeCodeAgent'
+  | 'newCodexAppAgent'
+  | 'newCodexAgent'
+  | 'newGeminiCliAgent';
 
 export interface HeterogeneousAgentConfig {
   command: string;
   iconId: string;
   menuKey: string;
   menuLabelKey: HeterogeneousAgentMenuLabelKey;
+  protocol?: string;
+  spawnLocal?: boolean;
   title: string;
-  type: HeterogeneousProviderConfig['type'];
+  type: HeterogeneousCliAgentType;
 }
 
 export const HETEROGENEOUS_AGENT_CONFIGS = [
@@ -28,7 +34,25 @@ export const HETEROGENEOUS_AGENT_CONFIGS = [
     title: 'Codex',
     type: 'codex',
   },
+  {
+    command: 'codex',
+    iconId: 'Codex',
+    menuKey: 'newCodexAppAgent',
+    menuLabelKey: 'newCodexAppAgent',
+    protocol: 'codex-app-server',
+    title: 'Codex App Server',
+    type: 'codex-app',
+  },
+  {
+    command: 'gemini',
+    iconId: 'Gemini',
+    menuKey: 'newGeminiCliAgent',
+    menuLabelKey: 'newGeminiCliAgent',
+    spawnLocal: true,
+    title: 'Gemini CLI',
+    type: 'gemini-cli',
+  },
 ] as const satisfies readonly HeterogeneousAgentConfig[];
 
-export const getHeterogeneousAgentConfig = (type: HeterogeneousProviderConfig['type']) =>
+export const getHeterogeneousAgentConfig = (type: string) =>
   HETEROGENEOUS_AGENT_CONFIGS.find((config) => config.type === type);

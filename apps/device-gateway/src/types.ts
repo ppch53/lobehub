@@ -98,14 +98,18 @@ export interface SystemInfoRequestMessage {
  * grants `heteroIngest` / `heteroFinish` for this operationId.
  */
 export interface AgentRunRequestMessage {
-  agentType: 'claude-code' | 'codex';
+  agentType: string;
+  args?: string[];
+  command?: string;
   /** Working directory to pass to `lh hetero exec --cwd`. */
   cwd?: string;
+  env?: Record<string, string>;
   /** Operation-scoped JWT signed by the server — inject as LOBEHUB_JWT env. */
   jwt: string;
   operationId: string;
   /** Plain-text prompt to pass via `lh hetero exec --prompt`. */
   prompt: string;
+  protocol?: string;
   /** Native CLI session id for `lh hetero exec --resume`. */
   resumeSessionId?: string;
   topicId: string;

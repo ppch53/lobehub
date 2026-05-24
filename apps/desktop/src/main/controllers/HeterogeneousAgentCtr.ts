@@ -14,6 +14,8 @@ import {
   CLAUDE_CODE_CLI_INSTALL_DOCS_URL,
   CODEX_CLI_INSTALL_COMMANDS,
   CODEX_CLI_INSTALL_DOCS_URL,
+  GEMINI_CLI_INSTALL_COMMANDS,
+  GEMINI_CLI_INSTALL_DOCS_URL,
   HeterogeneousAgentSessionErrorCode,
 } from '@lobechat/electron-client-ipc';
 import type { AskUserBridge } from '@lobechat/heterogeneous-agents/askUser';
@@ -22,6 +24,8 @@ import type { AgentContentBlock } from '@lobechat/heterogeneous-agents/spawn';
 import {
   AgentStreamPipeline,
   buildAgentInput,
+  CodexAppServerPipeline,
+  JsonlStreamProcessor,
   materializeImageToPath,
   normalizeImage,
   resolveCliSpawnPlan,
@@ -51,6 +55,8 @@ const CLI_AUTH_REQUIRED_PATTERNS = [
   /invalid authentication credentials/i,
   /authentication[_ ]error/i,
   /not authenticated/i,
+  /login required/i,
+  /please log in/i,
   /\bunauthorized\b/i,
   /\b401\b/,
 ] as const;
@@ -68,6 +74,7 @@ const CODEX_STDERR_STATUS_LINE = 'Reading prompt from stdin...';
 const CODEX_WARN_LOG_PATTERN = /^\d{4}-\d{2}-\d{2}T\S+\s+WARN\s+/;
 const CODEX_LOG_PATTERN = /^\d{4}-\d{2}-\d{2}T\S+\s+(?:DEBUG|ERROR|INFO|TRACE|WARN)\s+/;
 const CLI_ERROR_LINE_PATTERN = /^(?:error:|Error:|Usage:)/;
+const CODEX_APP_SERVER_PROTOCOL = 'codex-app-server';
 
 // ─── IPC types ───
 
@@ -82,6 +89,8 @@ interface StartSessionParams {
   cwd?: string;
   /** Environment variables */
   env?: Record<string, string>;
+  /** Optional transport protocol override, e.g. codex-app-server. */
+  protocol?: string;
   /** Session ID to resume (for multi-turn) */
   resumeSessionId?: string;
 }
@@ -149,6 +158,7 @@ interface AgentSession {
   cwd?: string;
   env?: Record<string, string>;
   process?: ChildProcess;
+  protocol?: string;
   resumeSessionId?: string;
   sessionId: string;
 }
@@ -197,14 +207,27 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
     const resolvedCommand = session.command.trim();
     if (resolvedCommand) return resolvedCommand;
 
-    return session.agentType === 'codex' ? 'codex' : 'claude';
+    if (session.agentType === 'codex' || session.agentType === 'codex-app') return 'codex';
+    if (session.agentType === 'gemini-cli') return 'gemini';
+    return 'claude';
+  }
+
+  private isCodexFamilySession(session: AgentSession): boolean {
+    return session.agentType === 'codex' || session.agentType === 'codex-app';
+  }
+
+  private isCodexAppServerSession(session: AgentSession): boolean {
+    return (
+      session.agentType === 'codex-app' ||
+      (session.agentType === 'codex' && session.protocol === CODEX_APP_SERVER_PROTOCOL)
+    );
   }
 
   private buildCodexCliMissingError(session: AgentSession): HeterogeneousAgentSessionError {
     const command = this.resolveSessionCommand(session);
 
     return {
-      agentType: 'codex',
+      agentType: session.agentType === 'codex-app' ? 'codex-app' : 'codex',
       code: HeterogeneousAgentSessionErrorCode.CliNotFound,
       command,
       docsUrl: CODEX_CLI_INSTALL_DOCS_URL,
@@ -226,6 +249,19 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
     };
   }
 
+  private buildGeminiCliMissingError(session: AgentSession): HeterogeneousAgentSessionError {
+    const command = this.resolveSessionCommand(session);
+
+    return {
+      agentType: 'gemini-cli',
+      code: HeterogeneousAgentSessionErrorCode.CliNotFound,
+      command,
+      docsUrl: GEMINI_CLI_INSTALL_DOCS_URL,
+      installCommands: GEMINI_CLI_INSTALL_COMMANDS,
+      message: `Gemini CLI was not found. Install it and make sure \`${command}\` can be executed.`,
+    };
+  }
+
   private buildCliMissingError(session: AgentSession): HeterogeneousAgentSessionError | undefined {
     switch (session.agentType) {
       case 'claude-code': {
@@ -233,6 +269,12 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
       }
       case 'codex': {
         return this.buildCodexCliMissingError(session);
+      }
+      case 'codex-app': {
+        return this.buildCodexCliMissingError(session);
+      }
+      case 'gemini-cli': {
+        return this.buildGeminiCliMissingError(session);
       }
       default: {
         return;
@@ -269,6 +311,28 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
           stderr,
         };
       }
+      case 'codex-app': {
+        return {
+          agentType: 'codex-app',
+          code: HeterogeneousAgentSessionErrorCode.AuthRequired,
+          command,
+          docsUrl: CODEX_CLI_INSTALL_DOCS_URL,
+          message:
+            'Codex App Server could not authenticate. Sign in again or refresh Codex credentials, then retry.',
+          stderr,
+        };
+      }
+      case 'gemini-cli': {
+        return {
+          agentType: 'gemini-cli',
+          code: HeterogeneousAgentSessionErrorCode.AuthRequired,
+          command,
+          docsUrl: GEMINI_CLI_INSTALL_DOCS_URL,
+          message:
+            'Gemini CLI could not authenticate. Sign in again on the server or refresh its credentials, then retry.',
+          stderr,
+        };
+      }
       default: {
         return;
       }
@@ -301,7 +365,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
         : 'The saved Codex thread could not be found, so it can no longer be resumed.';
 
     return {
-      agentType: 'codex',
+      agentType: session.agentType === 'codex-app' ? 'codex-app' : 'codex',
       code,
       command: session.command,
       message,
@@ -315,7 +379,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
     error: unknown,
     session: AgentSession,
   ): HeterogeneousAgentSessionError | undefined {
-    if (session.agentType !== 'codex' || !session.resumeSessionId) return;
+    if (!this.isCodexFamilySession(session) || !session.resumeSessionId) return;
 
     const message = this.getErrorMessage(error);
 
@@ -401,8 +465,9 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
     session: AgentSession,
     stderrOutput: string,
   ): string {
-    const relevantStderr =
-      session.agentType === 'codex' ? this.getRelevantCodexStderr(stderrOutput) : stderrOutput;
+    const relevantStderr = this.isCodexFamilySession(session)
+      ? this.getRelevantCodexStderr(stderrOutput)
+      : stderrOutput;
 
     return relevantStderr || `Agent exited with code ${code}`;
   }
@@ -413,9 +478,11 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
     const defaultCommand =
       session.agentType === 'claude-code'
         ? 'claude'
-        : session.agentType === 'codex'
+        : this.isCodexFamilySession(session)
           ? 'codex'
-          : undefined;
+          : session.agentType === 'gemini-cli'
+            ? 'gemini'
+            : undefined;
     if (!defaultCommand) return;
 
     const command = this.resolveSessionCommand(session);
@@ -423,7 +490,11 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
       command === defaultCommand
         ? await this.app.toolDetectorManager?.detect?.(defaultCommand, true)
         : await detectHeterogeneousCliCommand(
-            session.agentType === 'claude-code' ? 'claude-code' : 'codex',
+            session.agentType === 'claude-code'
+              ? 'claude-code'
+              : session.agentType === 'gemini-cli'
+                ? 'gemini-cli'
+                : 'codex',
             command,
           );
     const cliMissingError = this.buildCliMissingError(session);
@@ -528,6 +599,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
             createdAt: createdAt.toISOString(),
             cwd,
             envKeys: session.env ? Object.keys(session.env).sort() : [],
+            protocol: session.protocol,
             resumeSessionId: session.resumeSessionId,
             sessionId: session.sessionId,
             stdinBytes: stdinPayload === undefined ? 0 : Buffer.byteLength(stdinPayload),
@@ -792,6 +864,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
       command: params.command,
       cwd: params.cwd,
       env: params.env,
+      protocol: params.protocol,
       sessionId,
       resumeSessionId: params.resumeSessionId,
     });
@@ -819,6 +892,10 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
         sessionId: session.sessionId,
       });
       throw new Error(preflightError.message);
+    }
+
+    if (this.isCodexAppServerSession(session)) {
+      return this.sendCodexAppServerPrompt({ params, session });
     }
 
     // Stand up the AskUserQuestion MCP bridge for claude-code prompts BEFORE
@@ -911,6 +988,340 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
         useStdin,
         spawnPlan,
       });
+    });
+  }
+
+  private async sendCodexAppServerPrompt({
+    params,
+    session,
+  }: {
+    params: SendPromptParams;
+    session: AgentSession;
+  }): Promise<void> {
+    const cwd = session.cwd || electronApp.getPath('desktop');
+    const cliArgs = ['app-server', '--listen', 'stdio://', ...session.args];
+    const resolvedCliSpawnPlan = await resolveCliSpawnPlan(session.command, cliArgs);
+    const imageList = params.imageList ?? [];
+    const traceSession = await this.createCliTraceSession({
+      cliArgs,
+      cwd,
+      imageList,
+      session,
+    });
+
+    logger.info(
+      'Spawning Codex app-server:',
+      resolvedCliSpawnPlan.command,
+      resolvedCliSpawnPlan.args.join(' '),
+      `(cwd: ${cwd})`,
+    );
+
+    const proxyEnv = buildProxyEnv(this.app.storeManager.get('networkProxy'));
+
+    const spawnOptions = {
+      cwd,
+      detached: process.platform !== 'win32',
+      env: { ...process.env, ...proxyEnv, ...session.env },
+      stdio: ['pipe', 'pipe', 'pipe'] as ['pipe', 'pipe', 'pipe'],
+    };
+
+    return new Promise<void>((resolve, reject) => {
+      const proc = spawn(resolvedCliSpawnPlan.command, resolvedCliSpawnPlan.args, spawnOptions);
+      const pipeline = new CodexAppServerPipeline({ operationId: params.operationId });
+      const stdoutProcessor = new JsonlStreamProcessor();
+      const pendingRequests = new Map<
+        number,
+        {
+          reject: (error: Error) => void;
+          resolve: (value: any) => void;
+          timer: NodeJS.Timeout;
+        }
+      >();
+      const stderrChunks: string[] = [];
+
+      let nextRequestId = 1;
+      let settled = false;
+      let terminalError: Error | undefined;
+      let turnCompleted = false;
+      let turnCompletionKillTimer: NodeJS.Timeout | undefined;
+      let stdoutBroadcastQueue: Promise<void> = Promise.resolve();
+
+      const cleanupPendingRequests = (error: Error) => {
+        for (const [, pending] of pendingRequests) {
+          clearTimeout(pending.timer);
+          pending.reject(error);
+        }
+        pendingRequests.clear();
+      };
+
+      const settleReject = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
+
+      const writeJsonLine = (payload: any): Promise<void> =>
+        new Promise((lineResolve, lineReject) => {
+          if (!proc.stdin || proc.stdin.destroyed) {
+            lineReject(new Error('Codex app-server stdin is closed'));
+            return;
+          }
+
+          proc.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
+            if (error) {
+              lineReject(error);
+              return;
+            }
+            lineResolve();
+          });
+        });
+
+      const sendRequest = (method: string, requestParams: any, timeoutMs = 30_000): Promise<any> =>
+        new Promise((requestResolve, requestReject) => {
+          const id = nextRequestId++;
+          const timer = setTimeout(() => {
+            pendingRequests.delete(id);
+            requestReject(new Error(`Codex app-server request timed out: ${method}`));
+          }, timeoutMs);
+
+          pendingRequests.set(id, {
+            reject: requestReject,
+            resolve: requestResolve,
+            timer,
+          });
+
+          writeJsonLine({ id, method, params: requestParams }).catch((error: Error) => {
+            clearTimeout(timer);
+            pendingRequests.delete(id);
+            requestReject(error);
+          });
+        });
+
+      const respondToServerRequest = (message: any) => {
+        if (message?.id === undefined || typeof message.method !== 'string') return;
+
+        if (
+          message.method === 'item/commandExecution/requestApproval' ||
+          message.method === 'item/fileChange/requestApproval'
+        ) {
+          void writeJsonLine({ id: message.id, result: { decision: 'accept' } }).catch((error) => {
+            logger.warn('Failed to auto-approve Codex app-server request:', error);
+          });
+          return;
+        }
+
+        void writeJsonLine({
+          error: {
+            code: -32601,
+            message: `Unsupported Codex app-server request: ${message.method}`,
+          },
+          id: message.id,
+        }).catch((error) => {
+          logger.warn('Failed to reject Codex app-server request:', error);
+        });
+      };
+
+      const resolveClientResponse = (message: any) => {
+        if (typeof message?.id !== 'number' || !('result' in message || 'error' in message)) return;
+
+        const pending = pendingRequests.get(message.id);
+        if (!pending) return;
+
+        clearTimeout(pending.timer);
+        pendingRequests.delete(message.id);
+
+        if (message.error) {
+          pending.reject(new Error(message.error.message || JSON.stringify(message.error)));
+          return;
+        }
+
+        pending.resolve(message.result);
+      };
+
+      const broadcastEvents = (events: any[]) => {
+        if (pipeline.sessionId && pipeline.sessionId !== session.agentSessionId) {
+          session.agentSessionId = pipeline.sessionId;
+        }
+
+        for (const event of events) {
+          this.broadcast('heteroAgentEvent', {
+            event,
+            sessionId: session.sessionId,
+          });
+        }
+
+        if (pipeline.turnCompleted && !turnCompleted) {
+          turnCompleted = true;
+          if (pipeline.sessionId) session.agentSessionId = pipeline.sessionId;
+
+          proc.stdin?.end();
+          turnCompletionKillTimer = setTimeout(() => {
+            if (session.process === proc && !proc.killed) {
+              this.killProcessTree(proc, 'SIGTERM');
+            }
+          }, 1000);
+        }
+      };
+
+      const handlePayload = (payload: unknown) => {
+        resolveClientResponse(payload);
+        respondToServerRequest(payload);
+        broadcastEvents(pipeline.pushMessage(payload));
+      };
+
+      const enqueuePayload = (payload: unknown) => {
+        stdoutBroadcastQueue = stdoutBroadcastQueue
+          .then(async () => {
+            handlePayload(payload);
+          })
+          .catch((error) => {
+            logger.error('Failed to process Codex app-server payload:', error);
+          });
+      };
+
+      const stdout = proc.stdout as Readable;
+      stdout.on('data', (chunk: Buffer) => {
+        void this.appendCliTraceFile(traceSession, 'stdout.jsonl', chunk);
+        for (const payload of stdoutProcessor.push(chunk)) enqueuePayload(payload);
+      });
+      stdout.on('end', () => {
+        for (const payload of stdoutProcessor.flush()) enqueuePayload(payload);
+        stdoutBroadcastQueue = stdoutBroadcastQueue
+          .then(async () => {
+            broadcastEvents(pipeline.flush());
+          })
+          .catch((error) => {
+            logger.error('Failed to flush Codex app-server pipeline:', error);
+          });
+      });
+
+      const stderr = proc.stderr as Readable;
+      stderr.on('data', (chunk: Buffer) => {
+        void this.appendCliTraceFile(traceSession, 'stderr.log', chunk);
+        stderrChunks.push(chunk.toString('utf8'));
+      });
+
+      proc.on('error', (err) => {
+        logger.error('Codex app-server process error:', err);
+        void this.writeCliTraceJson(traceSession, 'process-error.json', {
+          message: err.message,
+          name: err.name,
+        });
+        void this.flushCliTrace(traceSession);
+        const sessionError = this.getSessionErrorPayload(err, session);
+        this.broadcast('heteroAgentSessionError', {
+          error: sessionError,
+          sessionId: session.sessionId,
+        });
+        settleReject(
+          new Error(typeof sessionError === 'string' ? sessionError : sessionError.message),
+        );
+      });
+
+      proc.on('exit', (code, signal) => {
+        const stdoutDrained = streamFinished(stdout, { writable: false }).catch(() => {
+          /* end / close / error all mean no more useful stdout. */
+        });
+
+        void stdoutDrained
+          .then(() => stdoutBroadcastQueue)
+          .finally(async () => {
+            if (turnCompletionKillTimer) clearTimeout(turnCompletionKillTimer);
+            cleanupPendingRequests(new Error('Codex app-server exited before request completed'));
+
+            void this.writeCliTraceJson(traceSession, 'exit.json', {
+              code,
+              finishedAt: new Date().toISOString(),
+              signal,
+            });
+            await this.flushCliTrace(traceSession);
+
+            logger.info('Codex app-server exited:', { code, sessionId: session.sessionId, signal });
+            session.process = undefined;
+
+            if (settled) return;
+            settled = true;
+
+            if (turnCompleted || session.cancelledByUs || code === 0) {
+              this.broadcast('heteroAgentSessionComplete', { sessionId: session.sessionId });
+              resolve();
+              return;
+            }
+
+            const stderrOutput = stderrChunks.join('').trim();
+            const errorMsg =
+              terminalError?.message || this.getExitErrorMessage(code, session, stderrOutput);
+            const sessionError = this.getSessionErrorPayload(errorMsg, session);
+            this.broadcast('heteroAgentSessionError', {
+              error: sessionError,
+              sessionId: session.sessionId,
+            });
+            reject(
+              new Error(typeof sessionError === 'string' ? sessionError : sessionError.message),
+            );
+          });
+      });
+
+      session.process = proc;
+
+      void (async () => {
+        try {
+          await sendRequest('initialize', {
+            capabilities: {
+              experimentalApi: true,
+              requestAttestation: false,
+            },
+            clientInfo: {
+              name: 'lobehub-desktop',
+              title: 'LobeHub Desktop',
+              version: electronApp.getVersion(),
+            },
+          });
+
+          const threadResult = session.agentSessionId
+            ? await sendRequest('thread/resume', {
+                approvalPolicy: 'never',
+                cwd,
+                excludeTurns: true,
+                persistExtendedHistory: false,
+                sandbox: 'danger-full-access',
+                threadId: session.agentSessionId,
+              })
+            : await sendRequest('thread/start', {
+                approvalPolicy: 'never',
+                cwd,
+                ephemeral: false,
+                experimentalRawEvents: false,
+                persistExtendedHistory: false,
+                sandbox: 'danger-full-access',
+              });
+
+          const threadId = threadResult?.thread?.id;
+          if (typeof threadId !== 'string') {
+            throw new Error('Codex app-server did not return a thread id');
+          }
+          session.agentSessionId = threadId;
+
+          const imagePaths = await this.resolveCliImagePaths(imageList);
+          await sendRequest('turn/start', {
+            approvalPolicy: 'never',
+            cwd,
+            input: [
+              { text: params.prompt, text_elements: [], type: 'text' },
+              ...imagePaths.map((imagePath) => ({ path: imagePath, type: 'localImage' })),
+            ],
+            sandboxPolicy: { type: 'dangerFullAccess' },
+            threadId,
+          });
+        } catch (error) {
+          terminalError = error instanceof Error ? error : new Error(String(error));
+          logger.error('Codex app-server drive failed:', terminalError);
+          cleanupPendingRequests(terminalError);
+          if (session.process === proc && !proc.killed) {
+            this.killProcessTree(proc, 'SIGTERM');
+          }
+        }
+      })();
     });
   }
 

@@ -6,7 +6,7 @@ import type { MarketService } from '@/server/services/market';
 const log = debug('lobe-server:hetero-sandbox-runner');
 
 export interface SandboxRunParams {
-  agentType: 'claude-code' | 'codex';
+  agentType: string;
   cwd?: string;
   /** GitHub OAuth token for cloning private repos. */
   githubToken?: string;
@@ -36,6 +36,19 @@ export interface SandboxRunParams {
 function repoToLocalDir(repo: string): string {
   const raw = (repo.split('/').findLast(Boolean) ?? repo).replace(/\.git$/, '');
   return raw.replaceAll(/[^\w.-]/g, '');
+}
+
+function resolveSandboxCwd(cwd: string | undefined, repos: string[] = []): string {
+  if (!cwd) return '/workspace';
+  if (cwd.startsWith('/')) return cwd;
+
+  const isRepoSelection =
+    repos.includes(cwd) ||
+    cwd.startsWith('http://') ||
+    cwd.startsWith('https://') ||
+    cwd.includes('/');
+
+  return isRepoSelection ? `/workspace/${repoToLocalDir(cwd)}` : cwd;
 }
 
 /**
@@ -79,11 +92,11 @@ function buildRepoSetupScript(repos: string[], githubToken?: string): string | n
     // Use git's insteadOf rewrite (passed via -c, not stored in .git/config) so the token
     // never ends up in the cloned repo's remote URL.
     const cloneCmd = githubToken
-      ? `git -c "url.https://oauth2:${githubToken}@github.com/.insteadOf=https://github.com/" clone -q https://github.com/${repoPath} '${dir}'`
-      : `git clone -q 'https://github.com/${repoPath}' '${dir}'`;
+      ? `git -c "url.https://oauth2:${githubToken}@github.com/.insteadOf=https://github.com/" clone -q https://github.com/${repoPath} '/workspace/${dir}'`
+      : `git clone -q 'https://github.com/${repoPath}' '/workspace/${dir}'`;
 
     // `|| true` makes clone failures non-fatal — CC still runs even if a repo can't be cloned.
-    return `{ [ -d '${dir}' ] || ${cloneCmd}; } || true`;
+    return `{ [ -d '/workspace/${dir}' ] || ${cloneCmd}; } || true`;
   });
 
   return lines.join(' && \\\n');
@@ -120,7 +133,7 @@ export async function spawnHeteroSandbox(params: SandboxRunParams): Promise<void
   // finds session files at the same path on every invocation (session files live under
   // ~/.claude/projects/<encoded-cwd>/). Without a consistent --cwd the session id stored
   // in topic.metadata.heteroSessionId can't be resolved on --resume after a page reload.
-  const cwd = params.cwd ?? '/workspace';
+  const cwd = resolveSandboxCwd(params.cwd, repos);
 
   // Build the `lh hetero exec` command string.
   // Prompt is passed via --input-json stdin ('-') to avoid shell quoting issues
@@ -174,7 +187,7 @@ export async function spawnHeteroSandbox(params: SandboxRunParams): Promise<void
   // Creds first (writes ~/.creds/env + authenticates gh CLI), then repo clone.
   const credsScript = buildCredsSetupScript(githubToken);
   const repoScript = buildRepoSetupScript(repos ?? [], githubToken);
-  const setupParts = [credsScript, repoScript].filter(Boolean);
+  const setupParts = ['mkdir -p /workspace', credsScript, repoScript].filter(Boolean);
   const shellCommand =
     setupParts.length > 0 ? `${setupParts.join(' && \\\n')} && \\\n${mainCommand}` : mainCommand;
 

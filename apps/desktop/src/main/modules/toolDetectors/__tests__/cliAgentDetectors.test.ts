@@ -181,5 +181,29 @@ describe('cliAgentDetectors', () => {
       expect(execMock).not.toHaveBeenCalled();
       expect(execFileMock).toHaveBeenCalledTimes(2);
     });
+
+    it('validates a custom Gemini CLI command', async () => {
+      callExecFile('/usr/local/bin/gemini\n');
+      callExecFile('Gemini CLI 0.43.0');
+
+      const { detectHeterogeneousCliCommand } = await import('../cliAgentDetectors');
+      const status = await detectHeterogeneousCliCommand('gemini-cli', 'gemini');
+
+      expect(status.available).toBe(true);
+      expect(status.path).toBe('/usr/local/bin/gemini');
+      expect(status.version).toBe('Gemini CLI 0.43.0');
+    });
+
+    it('validates a codex-app command with Codex keywords', async () => {
+      callExecFile('/usr/local/bin/codex\n');
+      callExecFile('Codex CLI 0.132.0');
+
+      const { detectHeterogeneousCliCommand } = await import('../cliAgentDetectors');
+      const status = await detectHeterogeneousCliCommand('codex-app', 'codex');
+
+      expect(status.available).toBe(true);
+      expect(status.path).toBe('/usr/local/bin/codex');
+      expect(status.version).toBe('Codex CLI 0.132.0');
+    });
   });
 });

@@ -27,6 +27,8 @@ export const useCreateHeteroAgent = () => {
           agencyConfig: {
             heterogeneousProvider: {
               command: definition.command,
+              ...(definition.protocol !== undefined && { protocol: definition.protocol }),
+              ...(definition.spawnLocal !== undefined && { spawnLocal: definition.spawnLocal }),
               type: definition.type,
             },
           },

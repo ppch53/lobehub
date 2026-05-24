@@ -7,6 +7,8 @@ type HeterogeneousAgentType = HeterogeneousProviderConfig['type'];
 const PROJECT_DEFAULT_HETEROGENEOUS_AGENT_TYPES = new Set<HeterogeneousAgentType>([
   'claude-code',
   'codex',
+  'codex-app',
+  'gemini-cli',
 ]);
 
 export const getDefaultTopicGroupModeByAgentType = (

@@ -1,7 +1,11 @@
 'use client';
 
 import { isDesktop } from '@lobechat/const';
-import { type ClaudeAuthStatus, type ToolStatus } from '@lobechat/electron-client-ipc';
+import {
+  type ClaudeAuthStatus,
+  type HeterogeneousCliAgentType,
+  type ToolStatus,
+} from '@lobechat/electron-client-ipc';
 import { getHeterogeneousAgentClientConfig } from '@lobechat/heterogeneous-agents/client';
 import type { HeterogeneousProviderConfig } from '@lobechat/types';
 import { ActionIcon, CopyButton, Flexbox, Icon, Input, Tag, Text, Tooltip } from '@lobehub/ui';
@@ -15,6 +19,15 @@ import HeterogeneousAgentStatusGuide from '@/features/Electron/HeterogeneousAgen
 import { toolDetectorService } from '@/services/electron/toolDetector';
 
 const COMMAND_LINE_HEIGHT = 28;
+const DETECTABLE_HETEROGENEOUS_AGENT_TYPES = new Set<string>([
+  'claude-code',
+  'codex',
+  'codex-app',
+  'gemini-cli',
+]);
+
+const isDetectableHeterogeneousAgentType = (type: string): type is HeterogeneousCliAgentType =>
+  DETECTABLE_HETEROGENEOUS_AGENT_TYPES.has(type);
 
 const useStyles = createStyles(({ css, token }) => ({
   card: css`
@@ -228,11 +241,12 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
 
     const displayName = providerConfig?.title || provider.type;
     const AgentIcon = providerConfig?.icon;
+    const detectableAgentType = isDetectableHeterogeneousAgentType(provider.type)
+      ? provider.type
+      : undefined;
+    const isDetectableAgentType = !!detectableAgentType;
     const showCliInstallGuide =
-      (provider.type === 'claude-code' || provider.type === 'codex') &&
-      !detecting &&
-      !status?.available &&
-      !isUsingCustomCommand;
+      isDetectableAgentType && !detecting && !status?.available && !isUsingCustomCommand;
 
     const fetchAuth = useCallback(async () => {
       if (provider.type !== 'claude-code') {
@@ -250,7 +264,7 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
     }, [provider.type, resolvedCommand]);
 
     const detect = useCallback(async () => {
-      if (!isDesktop || !resolvedCommand) {
+      if (!isDesktop || !resolvedCommand || !detectableAgentType) {
         setDetecting(false);
         return;
       }
@@ -258,7 +272,7 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
       setDetecting(true);
       try {
         const result = await toolDetectorService.detectHeterogeneousAgentCommand({
-          agentType: provider.type,
+          agentType: detectableAgentType,
           command: resolvedCommand,
         });
         setStatus(result);
@@ -274,7 +288,7 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
       } finally {
         setDetecting(false);
       }
-    }, [fetchAuth, provider.type, resolvedCommand]);
+    }, [detectableAgentType, fetchAuth, isDetectableAgentType, resolvedCommand]);
 
     useEffect(() => {
       void detect();

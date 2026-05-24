@@ -1,5 +1,5 @@
 import type { IconType } from '@lobehub/icons';
-import { ClaudeCode, Codex, getLobeIconCDN } from '@lobehub/icons';
+import { ClaudeCode, Codex, Gemini, getLobeIconCDN } from '@lobehub/icons';
 
 import {
   getHeterogeneousAgentConfig,
@@ -12,10 +12,14 @@ export interface HeterogeneousAgentClientConfig extends HeterogeneousAgentConfig
   icon: IconType;
 }
 
+type KnownHeterogeneousAgentType = (typeof HETEROGENEOUS_AGENT_CONFIGS)[number]['type'];
+
 const heterogeneousAgentIcons = {
   'claude-code': ClaudeCode,
   'codex': Codex,
-} as const satisfies Record<HeterogeneousAgentConfig['type'], IconType>;
+  'codex-app': Codex,
+  'gemini-cli': Gemini,
+} as const satisfies Record<KnownHeterogeneousAgentType, IconType>;
 
 const createAgentAvatar = (iconId: string) =>
   getLobeIconCDN(iconId, {
@@ -23,10 +27,13 @@ const createAgentAvatar = (iconId: string) =>
     format: 'avatar',
   });
 
+const resolveHeterogeneousAgentIcon = (type: string): IconType =>
+  heterogeneousAgentIcons[type as KnownHeterogeneousAgentType] ?? ClaudeCode;
+
 export const HETEROGENEOUS_AGENT_CLIENT_CONFIGS = HETEROGENEOUS_AGENT_CONFIGS.map((config) => ({
   ...config,
   avatar: createAgentAvatar(config.iconId),
-  icon: heterogeneousAgentIcons[config.type],
+  icon: resolveHeterogeneousAgentIcon(config.type),
 })) as readonly HeterogeneousAgentClientConfig[];
 
 export const getHeterogeneousAgentClientConfig = (type: HeterogeneousAgentConfig['type']) => {
@@ -37,6 +44,6 @@ export const getHeterogeneousAgentClientConfig = (type: HeterogeneousAgentConfig
   return {
     ...config,
     avatar: createAgentAvatar(config.iconId),
-    icon: heterogeneousAgentIcons[config.type],
+    icon: resolveHeterogeneousAgentIcon(config.type),
   } satisfies HeterogeneousAgentClientConfig;
 };

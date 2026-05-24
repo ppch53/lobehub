@@ -657,11 +657,17 @@ export class AiAgentService {
     //
     // Detection: prefer agencyConfig.heterogeneousProvider.type (set by the UI),
     // fall back to model field for backwards compatibility.
-    const HETERO_AGENT_MODELS = new Set<string>(['claude-code', 'codex']);
-    const heteroProviderType = agentConfig.agencyConfig?.heterogeneousProvider?.type;
+    const HETERO_AGENT_MODELS = new Set<string>([
+      'claude-code',
+      'codex',
+      'codex-app',
+      'gemini-cli',
+    ]);
+    const heterogeneousProvider = agentConfig.agencyConfig?.heterogeneousProvider;
+    const heteroProviderType = heterogeneousProvider?.type;
     const isHeteroAgent = !!heteroProviderType || HETERO_AGENT_MODELS.has(model);
     if (isHeteroAgent) {
-      const heteroType = (heteroProviderType ?? model) as 'claude-code' | 'codex';
+      const heteroType = heteroProviderType ?? model;
       const operationId = nanoid();
 
       // Create user message so the conversation is visible in the UI immediately.
@@ -693,57 +699,73 @@ export class AiAgentService {
       const resumeSessionId = await heteroService.getHeterogeneousResumeSessionId(topicId);
       // Sign an operation-scoped JWT so the CLI can authenticate against
       // heteroIngest / heteroFinish without full user credentials.
-      let operationJwt: string;
-      try {
-        operationJwt = await signOperationJwt(this.userId);
-      } catch (err) {
-        log('execAgent: failed to sign operation JWT for hetero run: %O', err);
-        throw new Error('Failed to sign operation JWT for hetero agent', { cause: err });
-      }
+      let operationJwt: string | undefined;
+      const getOperationJwt = async () => {
+        if (operationJwt) return operationJwt;
+        try {
+          operationJwt = await signOperationJwt(this.userId);
+          return operationJwt;
+        } catch (err) {
+          log('execAgent: failed to sign operation JWT for hetero run: %O', err);
+          throw new Error('Failed to sign operation JWT for hetero agent', { cause: err });
+        }
+      };
 
       // Read repos from topic metadata for sandbox setup (web/cloud only).
       const topic = await this.topicModel.findById(topicId);
-      const topicRepos: string[] = topic?.metadata?.repos ?? [];
+      const topicMetadata = topic?.metadata;
+      const workingDirectory =
+        topicMetadata?.workingDirectory ??
+        agentConfig.chatConfig?.runtimeEnv?.workingDirectory ??
+        heterogeneousProvider?.cwd;
+      const effectiveDeviceId =
+        requestedDeviceId ??
+        topicMetadata?.boundDeviceId ??
+        agentConfig.agencyConfig?.boundDeviceId;
+      const topicRepos: string[] = topicMetadata?.repos ?? [];
 
-      // Resolve GitHub OAuth token for the sandbox. Always attempt so CC can use
-      // git / gh CLI even when no repos are pre-selected. Falls back to the
-      // standard 'github' key (LobeHub OAuth connector default); agent config can
-      // override via GITHUB_CRED_KEY.
-      let githubToken: string | undefined;
-      const githubCredKey =
-        agentConfig.agencyConfig?.heterogeneousProvider?.env?.GITHUB_CRED_KEY ?? 'github';
-      try {
-        const list = await this.marketService.market.creds.list();
-        const cred = list.data?.find((c: { key: string }) => c.key === githubCredKey);
-        if (cred) {
-          const full = await this.marketService.market.creds.get(cred.id, { decrypt: true });
-          const vals = (full as any).plaintext ?? (full as any).values ?? {};
-          githubToken = vals.access_token ?? vals.token;
-        }
-      } catch (err) {
-        log('execAgent: failed to resolve GitHub token: %O', err);
-      }
-
-      // Build cloud-specific system context (repo list + workspace info + optional agent-level static context).
-      const { buildCloudHeteroContext } =
-        await import('@/server/services/heterogeneousAgent/cloudHeteroContext');
-      const systemContext = buildCloudHeteroContext({
-        agentSystemContext: agentConfig.agencyConfig?.heterogeneousProvider?.systemContext,
-        githubToken,
-        repos: topicRepos,
-      });
-
+      const localSystemContext = heterogeneousProvider?.systemContext?.trim() || undefined;
       const heteroParams = {
         agentType: heteroType,
-        githubToken,
-        jwt: operationJwt,
+        args: heterogeneousProvider?.args,
+        command: heterogeneousProvider?.command,
+        cwd: workingDirectory,
+        env: heterogeneousProvider?.env,
         operationId,
         prompt,
-        repos: topicRepos,
+        protocol: heterogeneousProvider?.protocol,
         resumeSessionId,
-        systemContext,
         topicId,
-        userId: this.userId,
+      };
+
+      const failHeteroDispatch = async (
+        message: string,
+        detail = message,
+      ): Promise<ExecAgentResult> => {
+        await this.messageModel.update(assistantMsg.id, {
+          content: '',
+          error: {
+            body: { detail },
+            message,
+            type: 'ServerAgentRuntimeError',
+          },
+        });
+        await this.topicModel.updateMetadata(topicId, { runningOperation: null });
+
+        return {
+          agentId: resolvedAgentId,
+          assistantMessageId: assistantMsg.id,
+          autoStarted: false,
+          createdAt: new Date().toISOString(),
+          error: detail,
+          message,
+          operationId,
+          status: 'error',
+          success: false,
+          timestamp: new Date().toISOString(),
+          topicId,
+          userMessageId: userMsg?.id ?? parentMessageId ?? '',
+        };
       };
 
       // Seed topic.metadata.runningOperation so heteroIngest can validate the operation.
@@ -759,44 +781,72 @@ export class AiAgentService {
         },
       });
 
-      if (requestedDeviceId) {
+      if (heterogeneousProvider?.spawnLocal) {
+        const { spawnHeteroLocal } =
+          await import('@/server/services/heterogeneousAgent/localRunner');
+        spawnHeteroLocal({
+          ...heteroParams,
+          heterogeneousAgentService: heteroService,
+          systemContext: localSystemContext,
+        }).catch((err) => {
+          log('execAgent: hetero local spawn failed: %O', err);
+        });
+      } else if (effectiveDeviceId) {
         // Dispatch to the user's connected desktop via device-gateway.
         const result = await deviceProxy.dispatchAgentRun({
           ...heteroParams,
-          deviceId: requestedDeviceId,
+          deviceId: effectiveDeviceId,
+          jwt: await getOperationJwt(),
+          userId: this.userId,
         });
         if (!result.success) {
           log('execAgent: hetero device dispatch failed: %s', result.error);
-          await this.messageModel.update(assistantMsg.id, {
-            content: '',
-            error: {
-              body: { detail: result.error },
-              message: result.error ?? 'Device dispatch failed',
-              type: 'ServerAgentRuntimeError',
-            },
-          });
-          return {
-            agentId: resolvedAgentId,
-            assistantMessageId: assistantMsg.id,
-            autoStarted: false,
-            createdAt: new Date().toISOString(),
-            error: result.error,
-            message: 'Hetero agent device dispatch failed',
-            operationId,
-            status: 'error',
-            success: false,
-            timestamp: new Date().toISOString(),
-            topicId,
-            userMessageId: userMsg?.id ?? parentMessageId ?? '',
-          };
+          return failHeteroDispatch(
+            'Hetero agent device dispatch failed',
+            result.error ?? 'Device dispatch failed',
+          );
         }
-      } else {
+      } else if (process.env.ENABLE_CLOUD_SANDBOX_FALLBACK === 'true') {
+        let githubToken: string | undefined;
+        const githubCredKey = heterogeneousProvider?.env?.GITHUB_CRED_KEY ?? 'github';
+        try {
+          const list = await this.marketService.market.creds.list();
+          const cred = list.data?.find((c: { key: string }) => c.key === githubCredKey);
+          if (cred) {
+            const full = await this.marketService.market.creds.get(cred.id, { decrypt: true });
+            const vals = (full as any).plaintext ?? (full as any).values ?? {};
+            githubToken = vals.access_token ?? vals.token;
+          }
+        } catch (err) {
+          log('execAgent: failed to resolve GitHub token: %O', err);
+        }
+
+        const { buildCloudHeteroContext } =
+          await import('@/server/services/heterogeneousAgent/cloudHeteroContext');
+        const systemContext = buildCloudHeteroContext({
+          agentSystemContext: heterogeneousProvider?.systemContext,
+          githubToken,
+          repos: topicRepos,
+        });
         // Cloud sandbox path — fire-and-forget; errors surfaced via heteroFinish.
         const { spawnHeteroSandbox } =
           await import('@/server/services/heterogeneousAgent/sandboxRunner');
-        spawnHeteroSandbox({ ...heteroParams, marketService: this.marketService }).catch((err) => {
+        spawnHeteroSandbox({
+          ...heteroParams,
+          githubToken,
+          jwt: await getOperationJwt(),
+          marketService: this.marketService,
+          repos: topicRepos,
+          systemContext,
+          userId: this.userId,
+        }).catch((err) => {
           log('execAgent: hetero sandbox spawn failed: %O', err);
         });
+      } else {
+        return failHeteroDispatch(
+          'No desktop device is bound for this heterogeneous agent',
+          'Bind an online desktop device, or set ENABLE_CLOUD_SANDBOX_FALLBACK=true to use sandbox fallback.',
+        );
       }
 
       let gatewayToken: string | undefined;

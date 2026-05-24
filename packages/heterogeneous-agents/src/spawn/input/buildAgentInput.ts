@@ -18,8 +18,8 @@ export interface BuildAgentInputOptions extends NormalizeImageOptions {
  * Result of preparing input for a child agent process.
  *
  * `args` is appended to the agent's CLI argv (e.g. Codex `--image <path>`
- * pairs); `stdin` is the payload written to the child's stdin (stream-json
- * for Claude Code, raw text for Codex).
+ * pairs, Gemini `--prompt <text>`); `stdin` is the payload written to the
+ * child's stdin (stream-json for Claude Code, raw text for Codex).
  */
 export interface AgentInputPlan {
   args: string[];
@@ -109,13 +109,23 @@ const buildCodexInput = async (
   };
 };
 
+const buildGeminiInput = (blocks: AgentContentBlock[]): AgentInputPlan => {
+  const text = collectText(blocks);
+
+  return {
+    args: ['--prompt', text],
+    stdin: '',
+  };
+};
+
 /**
  * Convert a unified `AgentPromptInput` into the per-agent stdin payload + any
  * extra CLI args required to attach images. The single source of truth for
  * how each external agent CLI receives multimodal input.
  *
  * - `claude-code`: stream-json on stdin with text + base64 image content blocks
- * - `codex`: raw text on stdin + repeatable `--image <path>` flags
+ * - `codex` / `codex-app`: raw text on stdin + repeatable `--image <path>` flags
+ * - `gemini-cli`: prompt text via `--prompt`; image blocks are ignored for now
  *
  * Path-mode agents materialize URL / base64 images via `materializeImageToPath`
  * into `imageMaterializeDir` (defaults to `cacheDir` then `os.tmpdir()`).
@@ -133,6 +143,12 @@ export const buildAgentInput = async (
     }
     case 'codex': {
       return buildCodexInput(blocks, options);
+    }
+    case 'codex-app': {
+      return buildCodexInput(blocks, options);
+    }
+    case 'gemini-cli': {
+      return buildGeminiInput(blocks);
     }
     default: {
       throw new Error(`buildAgentInput: unsupported agent type "${agentType}"`);

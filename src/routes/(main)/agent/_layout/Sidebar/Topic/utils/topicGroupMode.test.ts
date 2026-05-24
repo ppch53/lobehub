@@ -21,6 +21,15 @@ describe('resolveAgentTopicGroupMode', () => {
     ).toBe('byProject');
   });
 
+  it('defaults Codex App Server agents to project grouping', () => {
+    expect(
+      resolveAgentTopicGroupMode({
+        agentType: 'codex-app',
+        globalMode: 'byTime',
+      }),
+    ).toBe('byProject');
+  });
+
   it('keeps normal agents on the global default grouping', () => {
     expect(resolveAgentTopicGroupMode({ globalMode: 'byTime' })).toBe('byTime');
   });

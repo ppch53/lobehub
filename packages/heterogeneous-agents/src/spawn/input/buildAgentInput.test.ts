@@ -211,6 +211,23 @@ describe('buildAgentInput', () => {
     });
   });
 
+  describe('gemini-cli', () => {
+    it('passes prompt text as --prompt argv and leaves stdin empty', async () => {
+      const plan = await buildAgentInput('gemini-cli', 'just text');
+      expect(plan.args).toEqual(['--prompt', 'just text']);
+      expect(plan.stdin).toBe('');
+    });
+
+    it('joins multiple text blocks with double newlines', async () => {
+      const plan = await buildAgentInput('gemini-cli', [
+        { text: 'first', type: 'text' },
+        { text: 'second', type: 'text' },
+      ]);
+      expect(plan.args).toEqual(['--prompt', 'first\n\nsecond']);
+      expect(plan.stdin).toBe('');
+    });
+  });
+
   it('throws on unknown agent types', async () => {
     await expect(buildAgentInput('kimi-cli', 'hi')).rejects.toThrow(/unsupported agent type/);
   });

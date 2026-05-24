@@ -1,5 +1,6 @@
 ## Set global build ENV
 ARG NODEJS_VERSION="24"
+ARG GEMINI_CLI_VERSION="0.43.0"
 
 ## Base image for all building stages
 FROM node:${NODEJS_VERSION}-slim AS base
@@ -30,6 +31,7 @@ RUN set -e && \
 FROM base AS builder
 
 ARG USE_CN_MIRROR
+ARG GEMINI_CLI_VERSION
 ARG NEXT_PUBLIC_BASE_PATH
 ARG NEXT_PUBLIC_SENTRY_DSN
 ARG NEXT_PUBLIC_ANALYTICS_POSTHOG
@@ -85,12 +87,21 @@ RUN set -e && \
     export COREPACK_NPM_REGISTRY=$(npm config get registry | sed 's/\/$//') && \
     npm i -g corepack@latest && \
     corepack enable && \
-    corepack use $(sed -n 's/.*"packageManager": "\(.*\)".*/\1/p' package.json) && \
+    node -e 'const fs=require("node:fs"); const pkg=JSON.parse(fs.readFileSync("package.json","utf8")); if (pkg.scripts) delete pkg.scripts.prepare; fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");' && \
+    corepack prepare $(sed -n 's/.*"packageManager": "\(.*\)".*/\1/p' package.json) --activate && \
     pnpm i && \
     mkdir -p /deps && \
     cd /deps && \
     echo '{"name":"deps","private":true}' > package.json && \
     pnpm add pg drizzle-orm
+
+RUN set -e && \
+    npm install -g "@google/gemini-cli@${GEMINI_CLI_VERSION}" && \
+    GEMINI_ROOT="$(npm root -g)/@google/gemini-cli" && \
+    mkdir -p /gemini-cli/bin /gemini-cli/node_modules/@google && \
+    cp -R "${GEMINI_ROOT}" /gemini-cli/node_modules/@google/gemini-cli && \
+    printf '%s\n' '#!/bin/sh' 'exec /bin/node /app/gemini-cli/node_modules/@google/gemini-cli/bundle/gemini.js "$@"' > /gemini-cli/bin/gemini && \
+    chmod +x /gemini-cli/bin/gemini
 
 COPY . .
 
@@ -99,48 +110,53 @@ RUN pnpm exec tsx scripts/dockerPrebuild.mts
 RUN rm -rf src/app/desktop "src/app/(backend)/trpc/desktop"
 
 # run build standalone for docker version
-RUN npm run build:docker
+RUN AUTH_SECRET="use-for-build-only-not-a-real-secret-32" \
+    BETTER_AUTH_SECRET="use-for-build-only-not-a-real-secret-32" \
+    npm run build:docker
 
 ## Application image, copy all the files for production
 FROM busybox:latest AS app
 
 COPY --from=base /distroless/ /
 
-# Automatically leverage output traces to reduce image size
-# https://nextjs.org/docs/advanced-features/output-file-tracing
-COPY --from=builder /app/.next/standalone /app/
-COPY --from=builder /app/.next/static /app/.next/static
-# Copy SPA assets (Vite build output)
-COPY --from=builder /app/public/_spa /app/public/_spa
-# Copy database migrations
-COPY --from=builder /app/packages/database/migrations /app/migrations
-COPY --from=builder /app/scripts/migrateServerDB/docker.cjs /app/docker.cjs
-COPY --from=builder /app/scripts/migrateServerDB/errorHint.js /app/errorHint.js
-
-# copy dependencies
-COPY --from=builder /deps/node_modules/.pnpm /app/node_modules/.pnpm
-COPY --from=builder /deps/node_modules/pg /app/node_modules/pg
-COPY --from=builder /deps/node_modules/drizzle-orm /app/node_modules/drizzle-orm
-
-# Copy server launcher and shared scripts
-COPY --from=builder /app/scripts/serverLauncher/startServer.js /app/startServer.js
-COPY --from=builder /app/scripts/_shared /app/scripts/_shared
-
 RUN set -e && \
     addgroup -S -g 1001 nodejs && \
-    adduser -D -G nodejs -H -S -h /app -u 1001 nextjs && \
-    chown -R nextjs:nodejs /app /etc/proxychains4.conf
+    adduser -D -G nodejs -H -S -h /app -u 1001 nextjs
 
-## Production image, copy all the files and run next
-FROM scratch
+# Automatically leverage output traces to reduce image size
+# https://nextjs.org/docs/advanced-features/output-file-tracing
+COPY --chown=nextjs:nodejs --from=builder /app/.next/standalone /app/
+COPY --chown=nextjs:nodejs --from=builder /app/.next/static /app/.next/static
+# Copy SPA assets (Vite build output)
+COPY --chown=nextjs:nodejs --from=builder /app/public/_spa /app/public/_spa
+# Copy database migrations
+COPY --chown=nextjs:nodejs --from=builder /app/packages/database/migrations /app/migrations
+COPY --chown=nextjs:nodejs --from=builder /app/scripts/migrateServerDB/docker.cjs /app/docker.cjs
+COPY --chown=nextjs:nodejs --from=builder /app/scripts/migrateServerDB/errorHint.js /app/errorHint.js
 
-# Copy all the files from app, set the correct permission for prerender cache
-COPY --from=app / /
+# copy dependencies
+COPY --chown=nextjs:nodejs --from=builder /deps/node_modules/.pnpm /app/node_modules/.pnpm
+COPY --chown=nextjs:nodejs --from=builder /deps/node_modules/pg /app/node_modules/pg
+COPY --chown=nextjs:nodejs --from=builder /deps/node_modules/drizzle-orm /app/node_modules/drizzle-orm
+
+# Copy server launcher and shared scripts
+COPY --chown=nextjs:nodejs --from=builder /app/scripts/serverLauncher/startServer.js /app/startServer.js
+COPY --chown=nextjs:nodejs --from=builder /app/scripts/_shared /app/scripts/_shared
+COPY --chown=nextjs:nodejs --from=builder /gemini-cli /app/gemini-cli
+
+RUN set -e && \
+    mkdir -p /app/.gemini /workspace && \
+    chown nextjs:nodejs /app /app/.gemini /workspace /etc/proxychains4.conf
+
+## Production image, configure all files copied into the app stage
+FROM app AS production
 
 ENV NODE_ENV="production" \
+    HOME="/app" \
     NODE_OPTIONS="--dns-result-order=ipv4first --use-openssl-ca" \
     NODE_EXTRA_CA_CERTS="" \
     NODE_TLS_REJECT_UNAUTHORIZED="" \
+    PATH="/app/gemini-cli/bin:/bin:/usr/bin" \
     SSL_CERT_FILE="/etc/ssl/certs/ca-certificates.crt"
 
 # Make the middleware rewrite through local as default

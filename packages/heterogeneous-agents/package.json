@@ -6,6 +6,7 @@
     ".": "./src/index.ts",
     "./askUser": "./src/askUser/index.ts",
     "./client": "./src/client/index.ts",
+    "./spawn/gemini": "./src/spawn/geminiStreamPipeline.ts",
     "./spawn": "./src/spawn/index.ts"
   },
   "main": "./src/index.ts",

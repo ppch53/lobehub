@@ -367,7 +367,7 @@ const AgentStreamEventSchema = z.object({
  * → topic reverse-lookup is unreliable per LOBE-8516 design decision).
  */
 const HeteroIngestSchema = z.object({
-  agentType: z.enum(['claude-code', 'codex']),
+  agentType: z.string().min(1),
   events: z.array(AgentStreamEventSchema).min(1),
   operationId: z.string().min(1),
   topicId: z.string().min(1),
@@ -380,7 +380,7 @@ const HeteroIngestSchema = z.object({
  * (CC's per-cwd id), kept here so the server can resume next time.
  */
 const HeteroFinishSchema = z.object({
-  agentType: z.enum(['claude-code', 'codex']),
+  agentType: z.string().min(1),
   error: z
     .object({
       message: z.string(),

@@ -1,4 +1,4 @@
-import type { ChildProcess } from 'node:child_process';
+import type { ChildProcess, ChildProcessWithoutNullStreams } from 'node:child_process';
 import { spawn } from 'node:child_process';
 
 import type { AgentStreamEvent } from '@lobechat/agent-gateway-client';
@@ -30,6 +30,12 @@ export interface SpawnAgentOptions {
    * connected client renders live token streaming.
    */
   includePartialMessages?: boolean;
+  /**
+   * Whether to inherit the host process environment. Server-local agents pass
+   * a filtered env and set this to false so app/database secrets do not leak
+   * into the spawned CLI.
+   */
+  inheritEnv?: boolean;
   /**
    * Image normalization options (URL fetch + on-disk cache + path
    * materialization). Forwarded to `buildAgentInput`. When `prompt` is a
@@ -130,6 +136,13 @@ const CLAUDE_CODE_PERMISSION_ARGS = (): string[] =>
     : ['--permission-mode', 'bypassPermissions'];
 
 const CODEX_REQUIRED_ARGS = ['--json', '--skip-git-repo-check', '--full-auto'] as const;
+const GEMINI_REQUIRED_ARGS = [
+  '--output-format',
+  'stream-json',
+  '--approval-mode',
+  'yolo',
+  '--skip-trust',
+] as const;
 
 interface BuildSpawnArgsParams {
   agentType: string;
@@ -162,6 +175,13 @@ const buildCodexArgs = ({ extraArgs, inputArgs, resumeSessionId }: BuildSpawnArg
     ? ['exec', 'resume', ...CODEX_REQUIRED_ARGS, ...inputArgs, ...extraArgs, resumeSessionId, '-']
     : ['exec', ...CODEX_REQUIRED_ARGS, ...inputArgs, ...extraArgs];
 
+const buildGeminiArgs = ({ extraArgs, inputArgs, resumeSessionId }: BuildSpawnArgsParams) => [
+  ...GEMINI_REQUIRED_ARGS,
+  ...(resumeSessionId ? ['--resume', resumeSessionId] : []),
+  ...inputArgs,
+  ...extraArgs,
+];
+
 const buildSpawnArgs = (params: BuildSpawnArgsParams): string[] => {
   switch (params.agentType) {
     case 'claude-code': {
@@ -170,13 +190,24 @@ const buildSpawnArgs = (params: BuildSpawnArgsParams): string[] => {
     case 'codex': {
       return buildCodexArgs(params);
     }
+    case 'codex-app': {
+      return buildCodexArgs(params);
+    }
+    case 'gemini-cli': {
+      return buildGeminiArgs(params);
+    }
     default: {
       throw new Error(`spawnAgent: unsupported agent type "${params.agentType}"`);
     }
   }
 };
 
-const defaultCommand = (agentType: string): string => (agentType === 'codex' ? 'codex' : 'claude');
+const defaultCommand = (agentType: string): string =>
+  agentType === 'codex' || agentType === 'codex-app'
+    ? 'codex'
+    : agentType === 'gemini-cli'
+      ? 'gemini'
+      : 'claude';
 
 const killProcessTree = (proc: ChildProcess, signal: NodeJS.Signals): void => {
   if (!proc.pid || proc.killed) return;
@@ -232,17 +263,29 @@ export const spawnAgent = async (options: SpawnAgentOptions): Promise<SpawnAgent
   const cwd = options.cwd || process.cwd();
 
   const cliSpawnPlan = await resolveCliSpawnPlan(command, args);
-  const proc = spawn(cliSpawnPlan.command, cliSpawnPlan.args, {
+  const env: NodeJS.ProcessEnv = {};
+  if (options.inheritEnv !== false) {
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) env[key] = value;
+    }
+  }
+  for (const [key, value] of Object.entries(options.env ?? {})) {
+    env[key] = value;
+  }
+
+  const proc: ChildProcessWithoutNullStreams = spawn(cliSpawnPlan.command, cliSpawnPlan.args, {
     cwd,
     detached: process.platform !== 'win32',
-    env: { ...process.env, ...options.env },
+    env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
   const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
     (resolve, reject) => {
-      proc.on('exit', (code, signal) => resolve({ code, signal }));
-      proc.on('error', (err) => reject(err));
+      proc.on('exit', (code: number | null, signal: NodeJS.Signals | null) =>
+        resolve({ code, signal }),
+      );
+      proc.on('error', (err: Error) => reject(err));
     },
   );
 
@@ -256,8 +299,8 @@ export const spawnAgent = async (options: SpawnAgentOptions): Promise<SpawnAgent
     agentType: options.agentType,
     operationId: options.operationId,
   });
-  const stdout = proc.stdout!;
-  const stderr = proc.stderr!;
+  const stdout = proc.stdout;
+  const stderr = proc.stderr;
 
   // Buffer of events ready to be consumed by the AsyncIterable below. The
   // generator and the stdout listeners coordinate through this single queue +
@@ -317,7 +360,7 @@ export const spawnAgent = async (options: SpawnAgentOptions): Promise<SpawnAgent
 
   stdout.on('data', enqueuePush);
   stdout.on('end', enqueueFlush);
-  stdout.on('error', (err) => {
+  stdout.on('error', (err: Error) => {
     // Append onto the same chain so the error is surfaced strictly after any
     // in-flight push finishes — late events still get a chance to land before
     // the iterator throws.

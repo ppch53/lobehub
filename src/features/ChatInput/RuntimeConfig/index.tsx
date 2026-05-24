@@ -117,6 +117,10 @@ const RuntimeConfig = memo(() => {
     agentId ? agentByIdSelectors.isAgentHeterogeneousById(agentId)(s) : false,
     agentByIdSelectors.getAgentEnableModeById(agentId)(s),
   ]);
+  const heterogeneousProvider = useAgentStore((s) =>
+    agentId ? agentByIdSelectors.getAgencyConfigById(agentId)(s)?.heterogeneousProvider : undefined,
+  );
+  const isServerLocalHeterogeneous = !!heterogeneousProvider?.spawnLocal;
 
   const topicWorkingDirectory = useChatStore(topicSelectors.currentTopicWorkingDirectory);
   const agentWorkingDirectory = useAgentStore((s) =>
@@ -238,7 +242,7 @@ const RuntimeConfig = memo(() => {
   const rightContent = () => {
     // Web + heterogeneous agent always shows the cloud repo switcher,
     // regardless of the stored runtimeMode (which may be 'local' from desktop).
-    if (!isDesktop && isHeterogeneous && agentId) {
+    if (!isDesktop && isHeterogeneous && agentId && !isServerLocalHeterogeneous) {
       return <CloudRepoSwitcher agentId={agentId} />;
     }
 

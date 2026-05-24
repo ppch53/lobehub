@@ -1,5 +1,5 @@
 import { isDesktop } from '@lobechat/const';
-import type { ToolStatus } from '@lobechat/electron-client-ipc';
+import type { HeterogeneousCliAgentType, ToolStatus } from '@lobechat/electron-client-ipc';
 import { HETEROGENEOUS_AGENT_CLIENT_CONFIGS } from '@lobechat/heterogeneous-agents/client';
 import useSWR from 'swr';
 
@@ -24,7 +24,7 @@ export const useHeteroDetections = (): HeteroDetectionMap => {
         HETEROGENEOUS_AGENT_CLIENT_CONFIGS.map(async (config) => {
           try {
             const status = await toolDetectorService.detectHeterogeneousAgentCommand({
-              agentType: config.type,
+              agentType: config.type as HeterogeneousCliAgentType,
               command: config.command,
             });
             return [config.type, status] as const;

@@ -88,7 +88,10 @@ const isHeterogeneousAgentStatusGuideError = (
   const { agentType, code } = value as Partial<HeterogeneousAgentSessionError>;
 
   return (
-    (agentType === 'claude-code' || agentType === 'codex') &&
+    (agentType === 'claude-code' ||
+      agentType === 'codex' ||
+      agentType === 'codex-app' ||
+      agentType === 'gemini-cli') &&
     typeof code === 'string' &&
     HETEROGENEOUS_AGENT_STATUS_GUIDE_ERROR_CODES.has(code)
   );

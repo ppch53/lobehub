@@ -76,6 +76,11 @@ const WorkingDirectoryBar = memo(() => {
   const agentWorkingDirectory = useAgentStore((s) =>
     agentId ? agentByIdSelectors.getAgentWorkingDirectoryById(agentId)(s) : undefined,
   );
+  const isServerLocalHeterogeneous = useAgentStore((s) =>
+    agentId
+      ? !!agentByIdSelectors.getAgencyConfigById(agentId)(s)?.heterogeneousProvider?.spawnLocal
+      : false,
+  );
   const topicWorkingDirectory = useChatStore(topicSelectors.currentTopicWorkingDirectory);
   const effectiveWorkingDirectory = topicWorkingDirectory || agentWorkingDirectory;
 
@@ -90,7 +95,7 @@ const WorkingDirectoryBar = memo(() => {
 
   // On web, show the cloud repo switcher instead of the local directory picker
   if (!isDesktop) {
-    if (!agentId) return null;
+    if (!agentId || isServerLocalHeterogeneous) return null;
     return (
       <Flexbox horizontal align={'center'} className={styles.bar} justify={'space-between'}>
         <CloudRepoSwitcher agentId={agentId} />

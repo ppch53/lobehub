@@ -38,13 +38,16 @@ interface SelectRuntimeTypeOptions {
  * resume, continue, sub-agent dispatch, …) so adding a new entry point does
  * not require re-deriving the routing rules.
  *
- * Priority: `parentRuntime` > `hetero` (desktop only) > `gateway` > `client`.
+ * Priority: `parentRuntime` > server-local hetero > desktop hetero > gateway > client.
  */
 export const selectRuntimeType = (
   ctx: RuntimeSelectionContext,
   { isDesktop = defaultIsDesktop }: SelectRuntimeTypeOptions = {},
 ): AgentRuntimeType => {
   if (ctx.parentRuntime) return ctx.parentRuntime;
+  // Server-local heterogeneous agents (Gemini CLI on the 146 server) must
+  // route through execAgent so the server spawns them directly.
+  if (ctx.heterogeneousProvider?.spawnLocal) return 'gateway';
   if (isDesktop && ctx.heterogeneousProvider) return 'hetero';
   // On web, heterogeneous agents always run via Gateway sandbox regardless of the
   // isGatewayMode user preference — the sandbox is the only execution environment.

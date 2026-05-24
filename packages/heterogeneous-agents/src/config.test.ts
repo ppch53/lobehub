@@ -8,6 +8,8 @@ describe('heterogeneous agent config', () => {
     expect(HETEROGENEOUS_AGENT_CONFIGS.map((config) => config.type)).toEqual([
       'claude-code',
       'codex',
+      'codex-app',
+      'gemini-cli',
     ]);
   });
 
@@ -22,12 +24,26 @@ describe('heterogeneous agent config', () => {
       title: 'Codex',
       type: 'codex',
     });
+    expect(getHeterogeneousAgentConfig('codex-app')).toMatchObject({
+      command: 'codex',
+      protocol: 'codex-app-server',
+      title: 'Codex App Server',
+      type: 'codex-app',
+    });
+    expect(getHeterogeneousAgentConfig('gemini-cli')).toMatchObject({
+      command: 'gemini',
+      spawnLocal: true,
+      title: 'Gemini CLI',
+      type: 'gemini-cli',
+    });
   });
 
   it('derives display labels from the shared config source', () => {
     expect(HETEROGENEOUS_TYPE_LABELS).toEqual({
       'claude-code': 'Claude Code',
       'codex': 'Codex',
+      'codex-app': 'Codex App Server',
+      'gemini-cli': 'Gemini CLI',
     });
   });
 });

@@ -5,7 +5,11 @@ import {
 
 import { FileService } from '@/server/services/file';
 import { MarketService } from '@/server/services/market';
-import { ServerSandboxService } from '@/server/services/sandbox';
+import {
+  createDaytonaSandboxServiceFromEnv,
+  isDaytonaSandboxConfigured,
+  ServerSandboxService,
+} from '@/server/services/sandbox';
 
 import { type ServerRuntimeRegistration } from './types';
 
@@ -23,14 +27,19 @@ export const cloudSandboxRuntime: ServerRuntimeRegistration = {
       throw new Error('serverDB is required for Cloud Sandbox execution');
     }
 
-    const marketService = new MarketService({ userInfo: { userId: context.userId } });
     const fileService = new FileService(context.serverDB, context.userId);
-    const sandboxService = new ServerSandboxService({
-      fileService,
-      marketService,
-      topicId: context.topicId,
-      userId: context.userId,
-    });
+    const sandboxService = isDaytonaSandboxConfigured()
+      ? createDaytonaSandboxServiceFromEnv({
+          fileService,
+          topicId: context.topicId,
+          userId: context.userId,
+        })
+      : new ServerSandboxService({
+          fileService,
+          marketService: new MarketService({ userInfo: { userId: context.userId } }),
+          topicId: context.topicId,
+          userId: context.userId,
+        });
 
     return new CloudSandboxExecutionRuntime(sandboxService);
   },

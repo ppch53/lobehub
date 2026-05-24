@@ -14,6 +14,10 @@ export const CODEX_CLI_INSTALL_COMMANDS = [
   'brew install --cask codex',
 ] as const;
 
+export const GEMINI_CLI_INSTALL_DOCS_URL = 'https://github.com/google-gemini/gemini-cli';
+
+export const GEMINI_CLI_INSTALL_COMMANDS = ['npm install -g @google/gemini-cli', 'gemini'] as const;
+
 export const HeterogeneousAgentSessionErrorCode = {
   AuthRequired: 'auth_required',
   CliNotFound: 'cli_not_found',

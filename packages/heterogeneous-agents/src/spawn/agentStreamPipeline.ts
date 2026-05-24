@@ -34,7 +34,10 @@ export class AgentStreamPipeline {
   constructor(options: AgentStreamPipelineOptions) {
     this.adapter = createAdapter(options.agentType);
     this.operationId = options.operationId;
-    this.codexTracker = options.agentType === 'codex' ? new CodexFileChangeTracker() : undefined;
+    this.codexTracker =
+      options.agentType === 'codex' || options.agentType === 'codex-app'
+        ? new CodexFileChangeTracker()
+        : undefined;
   }
 
   /** CC/Codex session id extracted by the underlying adapter (`adapter.sessionId`). */

@@ -74,12 +74,16 @@ export class GatewayHttpClient {
   }
 
   async dispatchAgentRun(params: {
-    agentType: 'claude-code' | 'codex';
+    agentType: string;
+    args?: string[];
+    command?: string;
     cwd?: string;
     deviceId?: string;
+    env?: Record<string, string>;
     jwt: string;
     operationId: string;
     prompt: string;
+    protocol?: string;
     resumeSessionId?: string;
     timeout?: number;
     topicId: string;

@@ -224,9 +224,13 @@ export const useCreateMenuItems = () => {
    */
   const createHeterogeneousAgentMenuItems = useCallback(
     (options?: CreateAgentOptions): ItemType[] => {
-      if (!isDesktop) return [];
+      const visibleDefinitions = isDesktop
+        ? HETEROGENEOUS_AGENT_CLIENT_CONFIGS
+        : HETEROGENEOUS_AGENT_CLIENT_CONFIGS.filter((definition) => definition.spawnLocal);
 
-      return HETEROGENEOUS_AGENT_CLIENT_CONFIGS.map((definition) => {
+      if (visibleDefinitions.length === 0) return [];
+
+      return visibleDefinitions.map((definition) => {
         const AgentIcon = definition.icon;
 
         return {

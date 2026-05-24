@@ -23,7 +23,7 @@ export interface ToolInfo {
   priority?: number;
 }
 
-export type HeterogeneousCliAgentType = 'claude-code' | 'codex';
+export type HeterogeneousCliAgentType = 'claude-code' | 'codex' | 'codex-app' | 'gemini-cli';
 
 export interface DetectHeterogeneousAgentCommandParams {
   agentType: HeterogeneousCliAgentType;

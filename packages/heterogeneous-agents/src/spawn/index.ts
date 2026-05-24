@@ -14,6 +14,10 @@
  */
 export { AgentStreamPipeline, type AgentStreamPipelineOptions } from './agentStreamPipeline';
 export { type CliSpawnPlan, resolveCliSpawnPlan } from './cliSpawn';
+export {
+  CodexAppServerPipeline,
+  type CodexAppServerPipelineOptions,
+} from './codexAppServerPipeline';
 export { CodexFileChangeTracker } from './codexFileChangeTracker';
 export {
   type AgentContentBlock,

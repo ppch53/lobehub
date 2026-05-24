@@ -7,6 +7,7 @@ import { isDesktop } from '@lobechat/const';
 import {
   CLAUDE_CODE_CLI_INSTALL_DOCS_URL,
   CODEX_CLI_INSTALL_DOCS_URL,
+  GEMINI_CLI_INSTALL_DOCS_URL,
   type HeterogeneousAgentSessionError,
   HeterogeneousAgentSessionErrorCode,
 } from '@lobechat/electron-client-ipc';
@@ -71,22 +72,32 @@ const CLI_AUTH_REQUIRED_PATTERNS = [
   /invalid authentication credentials/i,
   /authentication[_ ]error/i,
   /not authenticated/i,
+  /login required/i,
+  /please log in/i,
   /\bunauthorized\b/i,
   /\b401\b/,
 ] as const;
 
 const buildCliAuthRequiredSessionError = (
-  agentType: 'claude-code' | 'codex',
+  agentType: 'claude-code' | 'codex' | 'codex-app' | 'gemini-cli',
   rawMessage: string,
 ): HeterogeneousAgentSessionError => ({
   agentType,
   code: HeterogeneousAgentSessionErrorCode.AuthRequired,
   docsUrl:
-    agentType === 'claude-code' ? CLAUDE_CODE_CLI_INSTALL_DOCS_URL : CODEX_CLI_INSTALL_DOCS_URL,
+    agentType === 'claude-code'
+      ? CLAUDE_CODE_CLI_INSTALL_DOCS_URL
+      : agentType === 'gemini-cli'
+        ? GEMINI_CLI_INSTALL_DOCS_URL
+        : CODEX_CLI_INSTALL_DOCS_URL,
   message:
     agentType === 'claude-code'
       ? 'Claude Code could not authenticate. Sign in again or refresh its credentials, then retry.'
-      : 'Codex could not authenticate. Sign in again or refresh its credentials, then retry.',
+      : agentType === 'gemini-cli'
+        ? 'Gemini CLI could not authenticate. Sign in again on the server or refresh its credentials, then retry.'
+        : agentType === 'codex-app'
+          ? 'Codex App Server could not authenticate. Sign in again or refresh Codex credentials, then retry.'
+          : 'Codex could not authenticate. Sign in again or refresh its credentials, then retry.',
   stderr: rawMessage,
 });
 
@@ -96,7 +107,13 @@ const maybeClassifyCliAuthRequiredError = (
   error: unknown,
   agentType?: string,
 ): HeterogeneousAgentSessionError | undefined => {
-  if (agentType !== 'claude-code' && agentType !== 'codex') return;
+  if (
+    agentType !== 'claude-code' &&
+    agentType !== 'codex' &&
+    agentType !== 'codex-app' &&
+    agentType !== 'gemini-cli'
+  )
+    return;
 
   const message =
     error instanceof Error
@@ -212,6 +229,7 @@ const resolveAdapterType = (config: HeterogeneousProviderConfig): string => {
   const cmd = config.command || 'claude';
   if (cmd.includes('claude')) return 'claude-code';
   if (cmd.includes('codex')) return 'codex';
+  if (cmd.includes('gemini')) return 'gemini-cli';
   if (cmd.includes('kimi')) return 'kimi-cli';
 
   return 'claude-code'; // default
@@ -1310,9 +1328,16 @@ export const executeHeterogeneousAgent = async (
     const result = await heterogeneousAgentService.startSession({
       agentType: adapterType,
       args: heterogeneousProvider.args,
-      command: heterogeneousProvider.command || (adapterType === 'codex' ? 'codex' : 'claude'),
+      command:
+        heterogeneousProvider.command ||
+        (adapterType === 'codex' || adapterType === 'codex-app'
+          ? 'codex'
+          : adapterType === 'gemini-cli'
+            ? 'gemini'
+            : 'claude'),
       cwd: workingDirectory,
       env: heterogeneousProvider.env,
+      protocol: heterogeneousProvider.protocol,
       resumeSessionId,
     });
     agentSessionId = result.sessionId;

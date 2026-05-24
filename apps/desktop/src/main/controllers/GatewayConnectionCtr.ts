@@ -119,6 +119,18 @@ export default class GatewayConnectionCtr extends ControllerModule {
 
   // ─── Agent Run Routing ───
 
+  private resolveAgentRunCommand(request: AgentRunRequestMessage): string {
+    if (request.command?.trim()) return request.command.trim();
+    if (request.agentType === 'codex' || request.agentType === 'codex-app') return 'codex';
+    if (request.agentType === 'gemini-cli') return 'gemini';
+    return 'claude';
+  }
+
+  private resolveAgentRunEnv(request: AgentRunRequestMessage): Record<string, string> {
+    const { LOBEHUB_JWT: _existingJwt, ...env } = request.env ?? {};
+    return { ...env, LOBEHUB_JWT: request.jwt };
+  }
+
   private async executeAgentRun(
     request: AgentRunRequestMessage,
   ): Promise<{ reason?: string; status: 'accepted' | 'rejected' }> {
@@ -128,11 +140,12 @@ export default class GatewayConnectionCtr extends ControllerModule {
       // Create a session for the hetero agent.
       const { sessionId } = await ctr.startSession({
         agentType: request.agentType,
-        args: [],
-        command: request.agentType === 'codex' ? 'codex' : 'claude',
+        args: request.args ?? [],
+        command: this.resolveAgentRunCommand(request),
         cwd: request.cwd,
         // Inject LOBEHUB_JWT so the CLI authenticates against heteroIngest.
-        env: { LOBEHUB_JWT: request.jwt },
+        env: this.resolveAgentRunEnv(request),
+        protocol: request.protocol,
         resumeSessionId: request.resumeSessionId,
       });
 

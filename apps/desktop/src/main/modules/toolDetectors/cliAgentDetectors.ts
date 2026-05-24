@@ -9,7 +9,7 @@ import { createCommandDetector } from '@/core/infrastructure/ToolDetectorManager
 const execFilePromise = promisify(execFile);
 const execPromise = promisify(exec);
 
-type HeterogeneousCliAgentType = 'claude-code' | 'codex';
+type HeterogeneousCliAgentType = 'claude-code' | 'codex' | 'codex-app' | 'gemini-cli';
 
 interface ValidatedDetectorOptions {
   description: string;
@@ -120,6 +120,12 @@ const HETEROGENEOUS_CLI_AGENT_OPTIONS = {
   },
   'codex': {
     validateKeywords: ['codex'],
+  },
+  'codex-app': {
+    validateKeywords: ['codex'],
+  },
+  'gemini-cli': {
+    validateKeywords: ['gemini'],
   },
 } as const satisfies Record<
   HeterogeneousCliAgentType,

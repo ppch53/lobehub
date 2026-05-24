@@ -11,7 +11,12 @@ export interface HeterogeneousAgentStatusGuideProps {
   variant?: HeterogeneousAgentStatusGuideVariant;
 }
 
-export const SUPPORTED_HETEROGENEOUS_AGENT_TYPES = ['claude-code', 'codex'] as const;
+export const SUPPORTED_HETEROGENEOUS_AGENT_TYPES = [
+  'claude-code',
+  'codex',
+  'codex-app',
+  'gemini-cli',
+] as const;
 
 export type SupportedHeterogeneousAgentType = (typeof SUPPORTED_HETEROGENEOUS_AGENT_TYPES)[number];
 

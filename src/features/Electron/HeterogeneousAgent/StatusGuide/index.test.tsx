@@ -12,6 +12,7 @@ vi.mock('@lobechat/const', () => ({
 vi.mock('@lobehub/icons', () => ({
   ClaudeCode: () => <span>Claude Code Icon</span>,
   Codex: () => <span>Codex Icon</span>,
+  Gemini: () => <span>Gemini Icon</span>,
 }));
 
 vi.mock('@lobehub/ui', () => ({

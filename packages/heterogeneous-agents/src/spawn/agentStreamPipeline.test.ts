@@ -56,6 +56,9 @@ describe('AgentStreamPipeline', () => {
     // codex → tracker is instantiated automatically; consumers stay agent-agnostic
     const codex = new AgentStreamPipeline({ agentType: 'codex', operationId: 'op-1' });
     expect((codex as any).codexTracker).toBeDefined();
+
+    const codexApp = new AgentStreamPipeline({ agentType: 'codex-app', operationId: 'op-1' });
+    expect((codexApp as any).codexTracker).toBeDefined();
   });
 
   it('drops non-JSON noise lines instead of throwing', async () => {

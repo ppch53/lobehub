@@ -184,3 +184,10 @@ export class ServerSandboxService implements ISandboxService {
     }
   }
 }
+
+export {
+  clearDaytonaSandboxCacheForTests,
+  createDaytonaSandboxServiceFromEnv,
+  DaytonaSandboxService,
+  isDaytonaSandboxConfigured,
+} from './daytonaSandboxService';
