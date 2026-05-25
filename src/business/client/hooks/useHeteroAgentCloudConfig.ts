@@ -6,6 +6,7 @@ import { useQueryRoute } from '@/hooks/useQueryRoute';
 import { lambdaQuery } from '@/libs/trpc/client';
 import { useAgentStore } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
+import { useServerConfigStore } from '@/store/serverConfig';
 
 // Fixed cred key — must stay in sync with CloudHeterogeneousConfig
 const CLAUDE_TOKEN_CRED_KEY = 'CLAUDE_CODE_OAUTH_TOKEN';
@@ -23,9 +24,12 @@ export const useHeteroAgentCloudConfig = (): HeteroAgentCloudConfig => {
     (s) => agentSelectors.currentAgentConfig(s)?.agencyConfig?.heterogeneousProvider,
   );
 
-  // Only claude-code agents require a cloud credential — codex and other providers do not use this key
+  // Only claude-code agents require a cloud credential — codex and other providers do not use this key.
+  // In self-hosted SSE mode, agents are dispatched to the user's desktop via device-gateway,
+  // so the desktop's local CLI credentials are used — no cloud token needed.
   const isClaudeCode = heterogeneousProvider?.type === 'claude-code';
-  const needsCredCheck = !isDesktop && isClaudeCode;
+  const isSseMode = useServerConfigStore((s) => s.serverConfig?.agentGatewayMode === 'sse');
+  const needsCredCheck = !isDesktop && !isSseMode && isClaudeCode;
 
   // Only fetch credentials when actually needed
   const { data: credsData, isLoading: isCredsLoading } = lambdaQuery.market.creds.list.useQuery(
