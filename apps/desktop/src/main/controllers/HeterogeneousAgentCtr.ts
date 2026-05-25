@@ -39,6 +39,7 @@ import type {
 } from '@/modules/heterogeneousAgent/types';
 import { buildProxyEnv } from '@/modules/networkProxy/envBuilder';
 import { detectHeterogeneousCliCommand } from '@/modules/toolDetectors';
+import type { HeteroIngestForwarder } from '@/services/heteroIngestForwarder';
 import { createLogger } from '@/utils/logger';
 
 import { ControllerModule, IpcMethod } from './index';
@@ -157,6 +158,7 @@ interface AgentSession {
   command: string;
   cwd?: string;
   env?: Record<string, string>;
+  ingestForwarder?: HeteroIngestForwarder;
   process?: ChildProcess;
   protocol?: string;
   resumeSessionId?: string;
@@ -874,6 +876,17 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
   }
 
   /**
+   * Attach a server-ingest forwarder to a session. When set, events
+   * broadcast from the spawned CLI are also POSTed to the server's
+   * `aiAgent.heteroIngest` endpoint so the browser SSE stream receives them.
+   * Called by GatewayConnectionCtr for gateway-driven runs only.
+   */
+  attachIngestForwarder(sessionId: string, forwarder: HeteroIngestForwarder): void {
+    const session = this.sessions.get(sessionId);
+    if (session) session.ingestForwarder = forwarder;
+  }
+
+  /**
    * Send a prompt to an agent session.
    *
    * Spawns the CLI process with preset flags. Pipes each stdout chunk through
@@ -1148,6 +1161,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
             event,
             sessionId: session.sessionId,
           });
+          session.ingestForwarder?.push(event);
         }
 
         if (pipeline.turnCompleted && !turnCompleted) {
@@ -1242,7 +1256,15 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
             if (settled) return;
             settled = true;
 
+            const forwarder = session.ingestForwarder;
+
             if (turnCompleted || session.cancelledByUs || code === 0) {
+              if (forwarder) {
+                const result = session.cancelledByUs ? 'cancelled' : 'success';
+                await forwarder
+                  .finish({ result, sessionId: session.agentSessionId })
+                  .catch((err) => logger.warn(`heteroFinish (${result}) failed:`, err));
+              }
               this.broadcast('heteroAgentSessionComplete', { sessionId: session.sessionId });
               resolve();
               return;
@@ -1252,6 +1274,15 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
             const errorMsg =
               terminalError?.message || this.getExitErrorMessage(code, session, stderrOutput);
             const sessionError = this.getSessionErrorPayload(errorMsg, session);
+            if (forwarder) {
+              await forwarder
+                .finish({
+                  error: { message: errorMsg, type: 'agent_exit_error' },
+                  result: 'error',
+                  sessionId: session.agentSessionId,
+                })
+                .catch((err) => logger.warn('heteroFinish (error) failed:', err));
+            }
             this.broadcast('heteroAgentSessionError', {
               error: sessionError,
               sessionId: session.sessionId,
@@ -1399,6 +1430,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
               event,
               sessionId: session.sessionId,
             });
+            session.ingestForwarder?.push(event);
           }
         })
         .catch((error) => {
@@ -1460,24 +1492,45 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
           logger.info('Agent process exited:', { code, sessionId: session.sessionId, signal });
           session.process = undefined;
 
+          const forwarder = session.ingestForwarder;
+
           // If *we* killed it (cancel / stop / before-quit), treat the non-zero
           // exit as a clean shutdown — surfacing it as an error would make a
           // user-initiated cancel look like an agent failure, and an Electron
           // shutdown affecting OTHER running CC sessions would pollute their
           // topics with a misleading "Agent exited with code 143" message.
           if (session.cancelledByUs) {
+            if (forwarder) {
+              await forwarder
+                .finish({ result: 'cancelled', sessionId: session.agentSessionId })
+                .catch((err) => logger.warn('heteroFinish (cancelled) failed:', err));
+            }
             this.broadcast('heteroAgentSessionComplete', { sessionId: session.sessionId });
             resolve();
             return;
           }
 
           if (code === 0) {
+            if (forwarder) {
+              await forwarder
+                .finish({ result: 'success', sessionId: session.agentSessionId })
+                .catch((err) => logger.warn('heteroFinish (success) failed:', err));
+            }
             this.broadcast('heteroAgentSessionComplete', { sessionId: session.sessionId });
             resolve();
           } else {
             const stderrOutput = stderrChunks.join('').trim();
             const errorMsg = this.getExitErrorMessage(code, session, stderrOutput);
             const sessionError = this.getSessionErrorPayload(errorMsg, session);
+            if (forwarder) {
+              await forwarder
+                .finish({
+                  error: { message: errorMsg, type: 'agent_exit_error' },
+                  result: 'error',
+                  sessionId: session.agentSessionId,
+                })
+                .catch((err) => logger.warn('heteroFinish (error) failed:', err));
+            }
             this.broadcast('heteroAgentSessionError', {
               error: sessionError,
               sessionId: session.sessionId,

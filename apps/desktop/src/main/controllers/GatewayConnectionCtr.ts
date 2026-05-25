@@ -2,6 +2,7 @@ import type { AgentRunRequestMessage } from '@lobechat/device-gateway-client';
 import type { GatewayConnectionStatus } from '@lobechat/electron-client-ipc';
 
 import GatewayConnectionService from '@/services/gatewayConnectionSrv';
+import { HeteroIngestForwarder } from '@/services/heteroIngestForwarder';
 
 import HeterogeneousAgentCtr from './HeterogeneousAgentCtr';
 import { ControllerModule, IpcMethod } from './index';
@@ -148,6 +149,20 @@ export default class GatewayConnectionCtr extends ControllerModule {
         protocol: request.protocol,
         resumeSessionId: request.resumeSessionId,
       });
+
+      // Attach an ingest forwarder so events flow back to the server's
+      // Redis Stream → browser SSE, not just local Electron IPC.
+      const serverUrl = await this.remoteServerConfigCtr.getRemoteServerUrl();
+      if (serverUrl) {
+        const forwarder = new HeteroIngestForwarder({
+          agentType: request.agentType,
+          jwt: request.jwt,
+          operationId: request.operationId,
+          serverUrl,
+          topicId: request.topicId,
+        });
+        ctr.attachIngestForwarder(sessionId, forwarder);
+      }
 
       // Fire-and-forget: sendPrompt runs the CLI until completion.
       ctr
